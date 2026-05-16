@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Applify — Landing Page</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #FAF9F7; color: #2C2C2A; }
+  nav { display: flex; align-items: center; justify-content: space-between; padding: 18px 40px; background: #FAF9F7; border-bottom: 0.5px solid #E8E6E0; }
+  .nav-logo { display: flex; align-items: center; gap: 10px; }
+  .nav-logo-circle { width: 36px; height: 36px; border-radius: 50%; background: #0F6E56; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .nav-wordmark { font-size: 20px; font-weight: 500; color: #0F6E56; letter-spacing: -0.5px; }
+  .nav-wordmark span { color: #D85A30; }
+  .nav-links { display: flex; gap: 28px; align-items: center; }
+  .nav-links a { font-size: 14px; color: #5F5E5A; text-decoration: none; }
+  .nav-cta { background: #D85A30; color: #fff; border: none; border-radius: 8px; padding: 9px 20px; font-size: 14px; font-weight: 500; cursor: pointer; }
+  .hero { padding: 72px 40px 56px; text-align: center; max-width: 600px; margin: 0 auto; }
+  .hero-badge { display: inline-flex; align-items: center; gap: 6px; background: #E1F5EE; color: #0F6E56; font-size: 12px; font-weight: 500; padding: 5px 14px; border-radius: 20px; margin-bottom: 24px; }
+  .hero-badge-dot { width: 6px; height: 6px; border-radius: 50%; background: #EF9F27; }
+  .hero h1 { font-size: 38px; font-weight: 500; line-height: 1.2; color: #085041; margin: 0 0 16px; font-family: Georgia, serif; }
+  .hero h1 span { color: #D85A30; }
+  .hero p { font-size: 16px; color: #5F5E5A; line-height: 1.7; margin: 0 0 32px; }
+  .hero-actions { display: flex; gap: 12px; justify-content: center; }
+  .btn-primary { background: #D85A30; color: #fff; border: none; border-radius: 10px; padding: 13px 28px; font-size: 15px; font-weight: 500; cursor: pointer; }
+  .btn-secondary { background: #fff; color: #0F6E56; border: 1.5px solid #0F6E56; border-radius: 10px; padding: 13px 28px; font-size: 15px; font-weight: 500; cursor: pointer; }
+  .hero-note { font-size: 12px; color: #888780; margin-top: 14px; }
+  .mockup-wrap { background: #fff; border: 0.5px solid #E8E6E0; border-radius: 16px; margin: 0 40px 56px; overflow: hidden; }
+  .mockup-bar { background: #F1EFE8; padding: 10px 16px; display: flex; gap: 6px; align-items: center; }
+  .mockup-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .mockup-inner { display: grid; grid-template-columns: 200px 1fr; min-height: 260px; }
+  .mockup-sidebar { background: #F8F7F4; border-right: 0.5px solid #E8E6E0; padding: 16px 0; }
+  .mockup-sidebar-header { padding: 0 16px 12px; font-size: 11px; font-weight: 500; color: #888780; letter-spacing: 1px; }
+  .mockup-chat-item { padding: 10px 16px; font-size: 12px; border-left: 2px solid transparent; }
+  .mockup-chat-item.active { background: #E1F5EE; border-left-color: #0F6E56; color: #085041; font-weight: 500; }
+  .mockup-chat-item.muted { color: #888780; }
+  .mockup-chat-company { font-size: 10px; color: #B4B2A9; margin-top: 2px; }
+  .mockup-main { padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
+  .analysis-card { background: #F8F7F4; border: 0.5px solid #E8E6E0; border-radius: 12px; padding: 16px; }
+  .analysis-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .analysis-title { font-size: 13px; font-weight: 500; color: #085041; }
+  .score-pill { background: #EF9F27; color: #412402; font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 20px; }
+  .analysis-row { display: flex; gap: 12px; }
+  .analysis-col { flex: 1; }
+  .analysis-col-label { font-size: 10px; font-weight: 500; color: #888780; letter-spacing: 0.8px; margin-bottom: 6px; }
+  .tag { display: inline-block; font-size: 11px; padding: 3px 8px; border-radius: 6px; margin: 2px 2px 2px 0; }
+  .tag-teal { background: #E1F5EE; color: #085041; }
+  .tag-coral { background: #FAECE7; color: #712B13; }
+  .chat-bubble-ai { background: #F1EFE8; border-radius: 12px 12px 12px 2px; padding: 10px 14px; font-size: 12px; color: #2C2C2A; max-width: 80%; line-height: 1.5; }
+  .features { padding: 0 40px 56px; }
+  .features-label { text-align: center; font-size: 12px; font-weight: 500; color: #888780; letter-spacing: 1.5px; margin-bottom: 8px; }
+  .features-heading { text-align: center; font-size: 24px; font-weight: 500; color: #085041; font-family: Georgia, serif; margin-bottom: 32px; }
+  .features-heading span { color: #D85A30; }
+  .features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .feature-card { background: #fff; border: 0.5px solid #E8E6E0; border-radius: 14px; padding: 20px; }
+  .feature-icon { width: 36px; height: 36px; border-radius: 10px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; }
+  .feature-icon-teal { background: #E1F5EE; }
+  .feature-icon-coral { background: #FAECE7; }
+  .feature-icon-amber { background: #FAEEDA; }
+  .feature-title { font-size: 14px; font-weight: 500; color: #2C2C2A; margin-bottom: 6px; }
+  .feature-desc { font-size: 12px; color: #5F5E5A; line-height: 1.6; }
+  .steps { background: #F1EFE8; padding: 48px 40px; }
+  .steps-heading { text-align: center; font-size: 24px; font-weight: 500; color: #085041; font-family: Georgia, serif; margin-bottom: 32px; }
+  .steps-row { display: flex; justify-content: center; align-items: flex-start; }
+  .step { text-align: center; flex: 1; max-width: 140px; }
+  .step-num { width: 36px; height: 36px; border-radius: 50%; background: #0F6E56; color: #fff; font-size: 14px; font-weight: 500; display: flex; align-items: center; justify-content: center; margin: 0 auto 10px; }
+  .step-num.coral { background: #D85A30; }
+  .step-num.amber { background: #EF9F27; color: #412402; }
+  .step-title { font-size: 13px; font-weight: 500; color: #2C2C2A; margin-bottom: 4px; }
+  .step-desc { font-size: 11px; color: #5F5E5A; line-height: 1.5; }
+  .step-connector { flex: 0.4; border-top: 1.5px dashed #B4B2A9; margin-top: 18px; }
+  .cta-section { padding: 56px 40px; text-align: center; }
+  .cta-section h2 { font-size: 28px; font-weight: 500; color: #085041; font-family: Georgia, serif; margin-bottom: 12px; }
+  .cta-section p { font-size: 15px; color: #5F5E5A; margin-bottom: 28px; }
+  footer { padding: 20px 40px; border-top: 0.5px solid #E8E6E0; display: flex; justify-content: space-between; align-items: center; }
+  .footer-copy { font-size: 12px; color: #888780; }
+  .footer-links { display: flex; gap: 20px; }
+  .footer-links a { font-size: 12px; color: #888780; text-decoration: none; }
+</style>
+</head>
+<body>
+  <nav>
+    <div class="nav-logo">
+      <div class="nav-logo-circle">
+        <svg width="22" height="22" viewBox="0 0 22 22"><line x1="5" y1="18" x2="11" y2="4" stroke="#E1F5EE" stroke-width="2.5" stroke-linecap="round"/><line x1="17" y1="18" x2="11" y2="4" stroke="#D85A30" stroke-width="2.5" stroke-linecap="round"/><line x1="7" y1="13" x2="15" y2="13" stroke="#EF9F27" stroke-width="2.2" stroke-linecap="round"/></svg>
+      </div>
+      <span class="nav-wordmark">Appl<span>ify</span></span>
+    </div>
+    <div class="nav-links"><a href="#">How it works</a><a href="#">Features</a><a href="#">About</a></div>
+    <button class="nav-cta">Get started free</button>
+  </nav>
+  <div class="hero">
+    <div class="hero-badge"><div class="hero-badge-dot"></div>Your personal job application co-pilot</div>
+    <h1>Apply smarter.<br><span>Land the role</span> you deserve.</h1>
+    <p>Applify gives every job application its own dedicated AI workspace. Paste a JD, get a fit analysis, and generate a tailored resume — all grounded in your profile.</p>
+    <div class="hero-actions">
+      <button class="btn-primary">Start for free</button>
+      <button class="btn-secondary">See how it works</button>
+    </div>
+    <p class="hero-note">Free during beta. No credit card required.</p>
+  </div>
+  <div class="mockup-wrap">
+    <div class="mockup-bar">
+      <div class="mockup-dot" style="background:#E24B4A;"></div>
+      <div class="mockup-dot" style="background:#EF9F27;"></div>
+      <div class="mockup-dot" style="background:#639922;"></div>
+    </div>
+    <div class="mockup-inner">
+      <div class="mockup-sidebar">
+        <div class="mockup-sidebar-header">JOB CHATS</div>
+        <div class="mockup-chat-item active">Senior Product Designer<div class="mockup-chat-company">Stripe</div></div>
+        <div class="mockup-chat-item muted">AI Engineer<div class="mockup-chat-company">Anthropic</div></div>
+        <div class="mockup-chat-item muted">Full Stack Engineer<div class="mockup-chat-company">Linear</div></div>
+      </div>
+      <div class="mockup-main">
+        <div class="analysis-card">
+          <div class="analysis-header"><span class="analysis-title">Fit analysis — Senior Product Designer, Stripe</span><span class="score-pill">84 / 100</span></div>
+          <div class="analysis-row">
+            <div class="analysis-col"><div class="analysis-col-label">STRENGTHS</div><span class="tag tag-teal">Full-stack background</span><span class="tag tag-teal">AI product experience</span><span class="tag tag-teal">Shipped 2 products</span></div>
+            <div class="analysis-col"><div class="analysis-col-label">GAPS</div><span class="tag tag-coral">Figma depth</span><span class="tag tag-coral">B2B SaaS focus</span></div>
+          </div>
+        </div>
+        <div class="chat-bubble-ai">Your AI background and full-stack experience align well with Stripe's expectations. Want me to tailor your resume to highlight your product work?</div>
+      </div>
+    </div>
+  </div>
+  <div class="features">
+    <div class="features-label">WHAT APPLIFY DOES</div>
+    <div class="features-heading">Everything your application <span>needs</span></div>
+    <div class="features-grid">
+      <div class="feature-card"><div class="feature-icon feature-icon-teal"></div><div class="feature-title">Persistent profile</div><div class="feature-desc">Upload your resume once. Applify parses and stores your full professional profile so you never re-explain yourself.</div></div>
+      <div class="feature-card"><div class="feature-icon feature-icon-coral"></div><div class="feature-title">JD fit analysis</div><div class="feature-desc">Get a quick snapshot or detailed breakdown of how well you match any job description, grounded in your actual profile.</div></div>
+      <div class="feature-card"><div class="feature-icon feature-icon-amber"></div><div class="feature-title">Tailored outputs</div><div class="feature-desc">Ask for a tailored resume, cover letter, or application answer. Generated on demand, never generic.</div></div>
+      <div class="feature-card"><div class="feature-icon feature-icon-teal"></div><div class="feature-title">One chat per job</div><div class="feature-desc">Each job opening gets its own focused chat. No more digging through general AI history to find your application notes.</div></div>
+      <div class="feature-card"><div class="feature-icon feature-icon-coral"></div><div class="feature-title">Application tracker</div><div class="feature-desc">Auto-tracks every job you add. Update your status manually and see at a glance what resume version you used.</div></div>
+      <div class="feature-card"><div class="feature-icon feature-icon-amber"></div><div class="feature-title">Proactive AI</div><div class="feature-desc">Applify suggests next steps after analysis without being pushy. You stay in control of every decision.</div></div>
+    </div>
+  </div>
+  <div class="steps">
+    <div class="steps-heading">How it works</div>
+    <div class="steps-row">
+      <div class="step"><div class="step-num">1</div><div class="step-title">Build your profile</div><div class="step-desc">Upload your resume. Applify parses it into a rich, persistent profile.</div></div>
+      <div class="step-connector"></div>
+      <div class="step"><div class="step-num coral">2</div><div class="step-title">Paste a JD</div><div class="step-desc">Create a new chat for each role and choose your analysis depth.</div></div>
+      <div class="step-connector"></div>
+      <div class="step"><div class="step-num amber">3</div><div class="step-title">Get your analysis</div><div class="step-desc">Receive a fit score, strengths, gaps, and a verdict.</div></div>
+      <div class="step-connector"></div>
+      <div class="step"><div class="step-num">4</div><div class="step-title">Generate outputs</div><div class="step-desc">Ask for a tailored resume, cover letter, or application answers.</div></div>
+      <div class="step-connector"></div>
+      <div class="step"><div class="step-num coral">5</div><div class="step-title">Track and apply</div><div class="step-desc">Your tracker updates automatically. Full pipeline in one view.</div></div>
+    </div>
+  </div>
+  <div class="cta-section">
+    <h2>Ready to apply smarter?</h2>
+    <p>Join the beta. Free forever during beta, no credit card needed.</p>
+    <button class="btn-primary" style="font-size:16px; padding:15px 36px;">Get started free</button>
+  </div>
+  <footer>
+    <span class="footer-copy">© 2025 Applify. All rights reserved.</span>
+    <div class="footer-links"><a href="#">Privacy</a><a href="#">Terms</a><a href="#">Contact</a></div>
+  </footer>
+</body>
+</html>

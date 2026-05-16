@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Applify — Login & Signup</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#FAF9F7; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .screen-label { font-size:11px; font-weight:500; color:#888780; letter-spacing:1px; text-align:center; margin-bottom:8px; }
+  .screens { display:grid; grid-template-columns:1fr 1fr; gap:16px; width:100%; max-width:900px; }
+  .auth-wrap { border-radius:16px; overflow:hidden; border:0.5px solid #E8E6E0; display:grid; grid-template-columns:220px 1fr; }
+  .auth-left { background:#0F6E56; padding:36px 28px; display:flex; flex-direction:column; justify-content:space-between; }
+  .auth-logo { display:flex; align-items:center; gap:8px; margin-bottom:32px; }
+  .auth-logo-circle { width:32px; height:32px; border-radius:50%; background:rgba(255,255,255,0.15); display:flex; align-items:center; justify-content:center; }
+  .auth-wordmark { font-size:18px; font-weight:500; color:#fff; }
+  .auth-wordmark span { color:#F0997B; }
+  .auth-pitch { flex:1; display:flex; flex-direction:column; justify-content:center; }
+  .auth-pitch h2 { font-size:22px; font-weight:500; color:#fff; font-family:Georgia,serif; line-height:1.3; margin:0 0 12px; }
+  .auth-pitch h2 span { color:#FAC775; }
+  .auth-pitch p { font-size:13px; color:#9FE1CB; line-height:1.7; margin:0 0 20px; }
+  .auth-features { display:flex; flex-direction:column; gap:10px; }
+  .auth-feature { display:flex; align-items:flex-start; gap:8px; }
+  .auth-feature-dot { width:5px; height:5px; border-radius:50%; background:#EF9F27; margin-top:6px; flex-shrink:0; }
+  .auth-feature-text { font-size:12px; color:#9FE1CB; line-height:1.5; }
+  .auth-bottom { font-size:11px; color:#5DCAA5; margin-top:24px; }
+  .auth-right { padding:32px 24px; background:#fff; }
+  .auth-heading { font-size:20px; font-weight:500; color:#085041; font-family:Georgia,serif; margin:0 0 4px; }
+  .auth-subheading { font-size:13px; color:#888780; margin:0 0 24px; }
+  .form-group { margin-bottom:14px; }
+  .form-label { font-size:12px; font-weight:500; color:#444441; margin-bottom:5px; display:block; }
+  .form-input { width:100%; box-sizing:border-box; background:#FAF9F7; border:1px solid #D3D1C7; border-radius:8px; padding:9px 12px; font-size:13px; color:#2C2C2A; }
+  .form-forgot { text-align:right; margin-top:-6px; margin-bottom:14px; }
+  .form-forgot a { font-size:12px; color:#0F6E56; text-decoration:none; }
+  .btn-full { width:100%; background:#D85A30; color:#fff; border:none; border-radius:10px; padding:11px; font-size:14px; font-weight:500; cursor:pointer; margin-bottom:14px; }
+  .divider { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .divider-line { flex:1; height:0.5px; background:#E8E6E0; }
+  .divider-text { font-size:12px; color:#888780; }
+  .btn-google { width:100%; background:#fff; color:#2C2C2A; border:1px solid #D3D1C7; border-radius:10px; padding:10px; font-size:13px; font-weight:500; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; }
+  .google-icon { width:16px; height:16px; border-radius:50%; background:#E8E6E0; }
+  .auth-switch { text-align:center; font-size:12px; color:#888780; margin-top:16px; }
+  .auth-switch a { color:#0F6E56; text-decoration:none; font-weight:500; }
+  .name-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+</style>
+</head>
+<body>
+  <div style="width:100%; max-width:1000px;">
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+      <div>
+        <div class="screen-label">LOGIN</div>
+        <div class="auth-wrap">
+          <div class="auth-left">
+            <div class="auth-logo">
+              <div class="auth-logo-circle"><svg width="18" height="18" viewBox="0 0 22 22"><line x1="5" y1="18" x2="11" y2="4" stroke="#E1F5EE" stroke-width="2.5" stroke-linecap="round"/><line x1="17" y1="18" x2="11" y2="4" stroke="#F0997B" stroke-width="2.5" stroke-linecap="round"/><line x1="7" y1="13" x2="15" y2="13" stroke="#EF9F27" stroke-width="2.2" stroke-linecap="round"/></svg></div>
+              <span class="auth-wordmark">Appl<span>ify</span></span>
+            </div>
+            <div class="auth-pitch">
+              <h2>Your applications,<br><span>finally organized.</span></h2>
+              <p>One workspace for every job you apply to.</p>
+              <div class="auth-features">
+                <div class="auth-feature"><div class="auth-feature-dot"></div><div class="auth-feature-text">Persistent profile from your resume</div></div>
+                <div class="auth-feature"><div class="auth-feature-dot"></div><div class="auth-feature-text">AI fit analysis grounded in who you are</div></div>
+                <div class="auth-feature"><div class="auth-feature-dot"></div><div class="auth-feature-text">Tailored resumes and cover letters</div></div>
+                <div class="auth-feature"><div class="auth-feature-dot"></div><div class="auth-feature-text">One chat per job, full tracker</div></div>
+              </div>
+            </div>
+            <div class="auth-bottom">Free during beta. No credit card required.</div>
+          </div>
+          <div class="auth-right">
+            <div class="auth-heading">Welcome back</div>
+            <div class="auth-subheading">Sign in to your Applify account</div>
+            <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" placeholder="you@email.com"/></div>
+            <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" placeholder="••••••••"/></div>
+            <div class="form-forgot"><a href="#">Forgot password?</a></div>
+            <button class="btn-full">Sign in</button>
+            <div class="divider"><div class="divider-line"></div><span class="divider-text">or</span><div class="divider-line"></div></div>
+            <button class="btn-google"><div class="google-icon"></div>Continue with Google</button>
+            <div class="auth-switch">Don't have an account? <a href="#">Sign up</a></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="screen-label">SIGN UP</div>
+        <div class="auth-wrap">
+          <div class="auth-left">
+            <div class="auth-logo">
+              <div class="auth-logo-circle"><svg width="18" height="18" viewBox="0 0 22 22"><line x1="5" y1="18" x2="11" y2="4" stroke="#E1F5EE" stroke-width="2.5" stroke-linecap="round"/><line x1="17" y1="18" x2="11" y2="4" stroke="#F0997B" stroke-width="2.5" stroke-linecap="round"/><line x1="7" y1="13" x2="15" y2="13" stroke="#EF9F27" stroke-width="2.2" stroke-linecap="round"/></svg></div>
+              <span class="auth-wordmark">Appl<span>ify</span></span>
+            </div>
+            <div class="auth-pitch">
+              <h2>Your applications,<br><span>finally organized.</span></h2>
+              <p>One workspace for every job you apply to.</p>
+              <div class="auth-features">
+                <div class="auth-feature"><div class="auth-feature-dot"></div><div class="auth-feature-text">Persistent profile from your resume</div></div>
+                <div class="auth-feature"><div class="auth-feature-dot"></div><div class="auth-feature-text">AI fit analysis grounded in who you are</div></div>
+                <div class="auth-feature"><div class="auth-feature-dot"></div><div class="auth-feature-text">Tailored resumes and cover letters</div></div>
+                <div class="auth-feature"><div class="auth-feature-dot"></div><div class="auth-feature-text">One chat per job, full tracker</div></div>
+              </div>
+            </div>
+            <div class="auth-bottom">Free during beta. No credit card required.</div>
+          </div>
+          <div class="auth-right">
+            <div class="auth-heading">Get started</div>
+            <div class="auth-subheading">Create your free Applify account</div>
+            <div class="name-row">
+              <div class="form-group"><label class="form-label">First name</label><input class="form-input" placeholder="Aishwarya"/></div>
+              <div class="form-group"><label class="form-label">Last name</label><input class="form-input" placeholder="Bhargava"/></div>
+            </div>
+            <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" placeholder="you@email.com"/></div>
+            <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" placeholder="••••••••"/></div>
+            <button class="btn-full">Create account</button>
+            <div class="divider"><div class="divider-line"></div><span class="divider-text">or</span><div class="divider-line"></div></div>
+            <button class="btn-google"><div class="google-icon"></div>Continue with Google</button>
+            <div class="auth-switch">Already have an account? <a href="#">Sign in</a></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

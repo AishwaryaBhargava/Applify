@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Applify — Design Index</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#FAF9F7; padding:48px 40px; }
+  .logo { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+  .logo-circle { width:36px; height:36px; border-radius:50%; background:#0F6E56; display:flex; align-items:center; justify-content:center; }
+  .wordmark { font-size:22px; font-weight:500; color:#0F6E56; }
+  .wordmark span { color:#D85A30; }
+  h1 { font-size:28px; font-weight:500; color:#085041; font-family:Georgia,serif; margin-bottom:6px; }
+  .sub { font-size:14px; color:#888780; margin-bottom:40px; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+  .card { background:#fff; border:0.5px solid #E8E6E0; border-radius:14px; padding:24px; text-decoration:none; display:block; }
+  .card:hover { border-color:#9FE1CB; }
+  .card-num { font-size:11px; font-weight:500; color:#888780; letter-spacing:1px; margin-bottom:8px; }
+  .card-title { font-size:16px; font-weight:500; color:#085041; margin-bottom:4px; }
+  .card-desc { font-size:13px; color:#5F5E5A; line-height:1.5; }
+  .card-arrow { color:#D85A30; font-size:18px; margin-top:12px; display:block; }
+  .docs-section { margin-top:48px; }
+  .docs-title { font-size:18px; font-weight:500; color:#085041; font-family:Georgia,serif; margin-bottom:16px; }
+  .docs-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  .doc-card { background:#fff; border:0.5px solid #E8E6E0; border-radius:10px; padding:16px; text-decoration:none; display:block; }
+  .doc-card:hover { border-color:#9FE1CB; }
+  .doc-title { font-size:13px; font-weight:500; color:#085041; margin-bottom:4px; }
+  .doc-desc { font-size:12px; color:#888780; }
+</style>
+</head>
+<body>
+  <div class="logo">
+    <div class="logo-circle"><svg width="22" height="22" viewBox="0 0 22 22"><line x1="5" y1="18" x2="11" y2="4" stroke="#E1F5EE" stroke-width="2.5" stroke-linecap="round"/><line x1="17" y1="18" x2="11" y2="4" stroke="#D85A30" stroke-width="2.5" stroke-linecap="round"/><line x1="7" y1="13" x2="15" y2="13" stroke="#EF9F27" stroke-width="2.2" stroke-linecap="round"/></svg></div>
+    <span class="wordmark">Appl<span>ify</span></span>
+  </div>
+  <h1>Design screens</h1>
+  <div class="sub">All finalized screens for Applify — open each to view the full design in your browser.</div>
+  <div class="grid">
+    <a class="card" href="01-landing-page.html"><div class="card-num">SCREEN 01</div><div class="card-title">Landing page</div><div class="card-desc">Hero, features grid, how it works, and CTA section.</div><span class="card-arrow">→</span></a>
+    <a class="card" href="02-login-signup.html"><div class="card-num">SCREEN 02</div><div class="card-title">Login & Signup</div><div class="card-desc">Auth screens with email/password and Google OAuth.</div><span class="card-arrow">→</span></a>
+    <a class="card" href="03-onboarding.html"><div class="card-num">SCREEN 03</div><div class="card-title">Onboarding</div><div class="card-desc">Resume upload and parsing progress states.</div><span class="card-arrow">→</span></a>
+    <a class="card" href="04-profile.html"><div class="card-num">SCREEN 04</div><div class="card-title">Profile page</div><div class="card-desc">Parsed profile with completeness bar, gap nudges, and editable sections.</div><span class="card-arrow">→</span></a>
+    <a class="card" href="05-chat.html"><div class="card-num">SCREEN 05</div><div class="card-title">Chat page</div><div class="card-desc">Core product loop — JD analysis, chat thread, and AI outputs.</div><span class="card-arrow">→</span></a>
+    <a class="card" href="06-tracker.html"><div class="card-num">SCREEN 06</div><div class="card-title">Tracker page</div><div class="card-desc">Application pipeline with status, resume type, and fit scores.</div><span class="card-arrow">→</span></a>
+    <a class="card" href="07-settings.html"><div class="card-num">SCREEN 07</div><div class="card-title">Settings page</div><div class="card-desc">Account, preferences, notifications, and privacy controls.</div><span class="card-arrow">→</span></a>
+  </div>
+  <div class="docs-section">
+    <div class="docs-title">Project documents</div>
+    <div class="docs-grid">
+      <a class="doc-card" href="../docs/applify-problem-statement.md"><div class="doc-title">Problem Statement</div><div class="doc-desc">Problem, motivation, requirements, scope</div></a>
+      <a class="doc-card" href="../docs/applify-tech-stack.md"><div class="doc-title">Tech Stack</div><div class="doc-desc">Full stack with choices and reasoning</div></a>
+      <a class="doc-card" href="../docs/applify-folder-structure.md"><div class="doc-title">Folder Structure</div><div class="doc-desc">Complete file tree with responsibilities</div></a>
+      <a class="doc-card" href="../docs/applify-pipeline.md"><div class="doc-title">Development Pipeline</div><div class="doc-desc">Phase-by-phase build plan</div></a>
+      <a class="doc-card" href="../docs/README.md"><div class="doc-title">README</div><div class="doc-desc">Setup, environment variables, deployment</div></a>
+    </div>
+  </div>
+</body>
+</html>

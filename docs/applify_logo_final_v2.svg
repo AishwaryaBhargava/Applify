@@ -1,0 +1,26 @@
+<svg width="100%" viewBox="0 0 680 200" role="img" style="" xmlns="http://www.w3.org/2000/svg">
+  <title style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Applify final logo v2</title>
+  <desc style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Applify logo with consistent coral color across icon and wordmark</desc>
+
+  <!-- Circle icon with deep teal -->
+  <circle cx="166" cy="100" r="52" fill="#0F6E56" style="fill:rgb(15, 110, 86);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  <!-- Deconstructed A strokes -->
+  <!-- Left leg: light cream/teal -->
+  <line x1="143" y1="136" x2="166" y2="72" stroke="#E1F5EE" stroke-width="6" stroke-linecap="round" style="fill:rgb(0, 0, 0);stroke:rgb(225, 245, 238);color:rgb(255, 255, 255);stroke-width:6px;stroke-linecap:round;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <!-- Right leg: same coral as wordmark -->
+  <line x1="189" y1="136" x2="166" y2="72" stroke="#D85A30" stroke-width="6" stroke-linecap="round" style="fill:rgb(0, 0, 0);stroke:rgb(216, 90, 48);color:rgb(255, 255, 255);stroke-width:6px;stroke-linecap:round;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <!-- Crossbar: amber -->
+  <line x1="150" y1="114" x2="182" y2="114" stroke="#EF9F27" stroke-width="5.5" stroke-linecap="round" style="fill:rgb(0, 0, 0);stroke:rgb(239, 159, 39);color:rgb(255, 255, 255);stroke-width:5.5px;stroke-linecap:round;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  <!-- Wordmark: Appl in deep teal -->
+  <text x="234" y="114" font-family="Georgia, serif" font-size="52" font-weight="700" fill="#0F6E56" letter-spacing="-1" style="fill:rgb(15, 110, 86);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, serif;font-size:52px;font-weight:700;text-anchor:start;dominant-baseline:auto">Appl</text>
+  <!-- ify in coral -->
+  <text x="352" y="114" font-family="Georgia, serif" font-size="52" font-weight="700" fill="#D85A30" letter-spacing="-1" style="fill:rgb(216, 90, 48);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, serif;font-size:52px;font-weight:700;text-anchor:start;dominant-baseline:auto">ify</text>
+  <!-- Amber accent dot -->
+  <circle cx="348" cy="100" r="5.5" fill="#EF9F27" style="fill:rgb(239, 159, 39);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  <!-- Tagline -->
+  <text x="235" y="138" font-family="sans-serif" font-size="11" fill="#888780" letter-spacing="1.8" style="fill:rgb(136, 135, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:sans-serif;font-size:11px;font-weight:400;text-anchor:start;dominant-baseline:auto">YOUR JOB APPLICATION CO-PILOT</text>
+
+</svg>
