@@ -32,7 +32,7 @@ Applify is a dedicated AI workspace for job applications. Each chat is one job o
 | Backend | Python FastAPI + Uvicorn |
 | Database | Supabase (Postgres) |
 | Auth | Supabase Auth (email + Google) |
-| AI — Fast | Groq (llama-3.3-70b-versatile) |
+| AI — Fast | Groq (openai/gpt-oss-120b) |
 | AI — Quality | Azure AI Foundry (GPT-4o) |
 | Frontend Deploy | Vercel |
 | Backend Deploy | Render |
@@ -108,8 +108,10 @@ AZURE_OPENAI_API_KEY=<your-azure-key>
 AZURE_OPENAI_API_VERSION=2024-12-01-preview
 AZURE_GPT4O_DEPLOYMENT=gpt-4o
 GROQ_API_KEY=<your-groq-key>
+GROQ_MODEL=openai/gpt-oss-120b
 SUPABASE_DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<dbname>
 SUPABASE_JWT_SECRET=<your-supabase-jwt-secret>
+SUPABASE_URL=https://<your-project>.supabase.co
 ALLOWED_ORIGINS=http://localhost:5173
 ```
 
@@ -128,7 +130,7 @@ VITE_SUPABASE_ANON_KEY=<your-supabase-anon-key>
 1. Go to [supabase.com](https://supabase.com) and create a new project
 2. From Project Settings, copy the database connection string (Session mode, port 5432) and add it as `SUPABASE_DATABASE_URL`
 3. From Project Settings > API, copy the `anon` key and add it as `VITE_SUPABASE_ANON_KEY`
-4. From Project Settings > API, copy the JWT secret and add it as `SUPABASE_JWT_SECRET`
+4. From Project Settings > API, copy the JWT secret and add it as `SUPABASE_JWT_SECRET`, and the project URL as `SUPABASE_URL` (the backend verifies tokens against the project JWKS first and falls back to the shared secret)
 5. From Project Settings > Auth, enable Google OAuth if you want Google login (requires a Google Cloud OAuth client)
 6. Run `alembic upgrade head` to create all tables
 
@@ -148,7 +150,7 @@ VITE_SUPABASE_ANON_KEY=<your-supabase-anon-key>
 
 1. Go to [console.groq.com](https://console.groq.com) and create an account
 2. Generate an API key and add it as `GROQ_API_KEY`
-3. No model deployment needed — Groq hosts `llama-3.3-70b-versatile` directly
+3. No model deployment needed — Groq hosts `openai/gpt-oss-120b` directly. Set `GROQ_MODEL` if you want a different model; `llama-3.3-70b-versatile` from the original plan has been decommissioned by Groq.
 
 ---
 

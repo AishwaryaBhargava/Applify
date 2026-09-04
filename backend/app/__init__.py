@@ -1,0 +1,1 @@
+"""Applify backend application package."""

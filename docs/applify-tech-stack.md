@@ -49,13 +49,13 @@ Groq handles fast conversational responses and quick analysis. Azure AI Foundry 
 
 | Feature | Model | Provider |
 |---|---|---|
-| Quick snapshot analysis | llama-3.3-70b-versatile | Groq |
-| Conversational chat responses | llama-3.3-70b-versatile | Groq |
+| Quick snapshot analysis | openai/gpt-oss-120b | Groq |
+| Conversational chat responses | openai/gpt-oss-120b | Groq |
 | Detailed breakdown analysis | GPT-4o | Azure AI Foundry |
 | Resume generation | GPT-4o | Azure AI Foundry |
 | Cover letter generation | GPT-4o | Azure AI Foundry |
 | Application question help | GPT-4o | Azure AI Foundry |
-| Profile gap nudges | llama-3.3-70b-versatile | Groq |
+| Profile gap nudges | openai/gpt-oss-120b | Groq |
 
 ### Rate Limit Notes
 - Groq free tier: generous limits, well suited for fast conversational responses
@@ -121,8 +121,10 @@ AZURE_OPENAI_API_KEY=<your-azure-key>
 AZURE_OPENAI_API_VERSION=2024-12-01-preview
 AZURE_GPT4O_DEPLOYMENT=gpt-4o
 GROQ_API_KEY=<your-groq-key>
+GROQ_MODEL=openai/gpt-oss-120b
 SUPABASE_DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<dbname>
 SUPABASE_JWT_SECRET=<your-supabase-jwt-secret>
+SUPABASE_URL=https://<your-project>.supabase.co
 ALLOWED_ORIGINS=http://localhost:5173
 ```
 
