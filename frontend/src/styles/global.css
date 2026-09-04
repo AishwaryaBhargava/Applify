@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Applify design tokens — mirrors designs/brand-colors.md and tailwind.config.js */
+:root {
+  /* Primary palette */
+  --color-teal-deep: #0f6e56;
+  --color-teal-medium: #1d9e75;
+  --color-teal-light: #e1f5ee;
+  --color-teal-soft: #9fe1cb;
+  --color-teal-ink: #085041;
+  --color-coral: #d85a30;
+  --color-coral-light: #faece7;
+  --color-coral-ink: #712b13;
+  --color-amber: #ef9f27;
+  --color-amber-light: #faeeda;
+  --color-amber-ink: #412402;
+
+  /* Neutral palette */
+  --color-bg: #faf9f7;
+  --color-card: #ffffff;
+  --color-surface: #f8f7f4;
+  --color-surface-warm: #f1efe8;
+  --color-border: #e8e6e0;
+  --color-border-input: #d3d1c7;
+  --color-text-primary: #2c2c2a;
+  --color-text-secondary: #5f5e5a;
+  --color-text-muted: #888780;
+  --color-text-faint: #b4b2a9;
+
+  /* Typography */
+  --font-serif: Georgia, Cambria, 'Times New Roman', serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+
+  /* Radii */
+  --radius-badge: 4px;
+  --radius-pill: 6px;
+  --radius-input: 8px;
+  --radius-btn: 10px;
+  --radius-box: 12px;
+  --radius-card: 14px;
+  --radius-panel: 16px;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-bg font-sans text-[15px] text-text-primary antialiased;
+    margin: 0;
+    min-height: 100vh;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-serif font-medium text-teal-ink;
+  }
+
+  #root {
+    min-height: 100vh;
+  }
+}
