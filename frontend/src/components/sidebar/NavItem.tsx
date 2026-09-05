@@ -6,10 +6,18 @@ interface NavItemProps {
   label: string
   icon: LucideIcon
   end?: boolean
+  /** A count worth surfacing on the nav itself; hidden when zero. */
+  badge?: number
 }
 
 /** Individual navigation link in the sidebar. */
-export default function NavItem({ to, label, icon: Icon, end }: NavItemProps) {
+export default function NavItem({
+  to,
+  label,
+  icon: Icon,
+  end,
+  badge = 0,
+}: NavItemProps) {
   return (
     <NavLink
       to={to}
@@ -25,6 +33,14 @@ export default function NavItem({ to, label, icon: Icon, end }: NavItemProps) {
     >
       <Icon size={16} className="flex-shrink-0" />
       <span className="truncate">{label}</span>
+      {badge > 0 && (
+        <span
+          title={`${badge} in progress`}
+          className="ml-auto flex h-[18px] min-w-[18px] flex-shrink-0 items-center justify-center rounded-full bg-amber-light px-1 text-[10px] font-medium text-amber-ink"
+        >
+          {badge}
+        </span>
+      )}
     </NavLink>
   )
 }

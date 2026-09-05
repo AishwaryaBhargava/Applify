@@ -11,6 +11,8 @@ import AnalysisTypeSelector from '../components/chat/AnalysisTypeSelector'
 import ChatInput from '../components/chat/ChatInput'
 import ChatThread from '../components/chat/ChatThread'
 import JobDescriptionPanel from '../components/chat/JobDescriptionPanel'
+import OutputActions from '../components/chat/OutputActions'
+import OutputsPanel from '../components/chat/OutputsPanel'
 import NewChatButton from '../components/sidebar/NewChatButton'
 import ResumeNudgeBanner from '../components/profile/ResumeNudgeBanner'
 import useStream from '../hooks/useStream'
@@ -69,6 +71,7 @@ export default function Chat() {
   const activeChat = useChatStore((state) => state.activeChat)
   const messages = useChatStore((state) => state.messages)
   const analysis = useChatStore((state) => state.analysis)
+  const outputs = useChatStore((state) => state.outputs)
   const isLoadingChat = useChatStore((state) => state.isLoadingChat)
   const isAnalyzing = useChatStore((state) => state.isAnalyzing)
   const error = useChatStore((state) => state.error)
@@ -76,6 +79,7 @@ export default function Chat() {
   const analysisErrorStatus = useChatStore((state) => state.analysisErrorStatus)
   const loadChat = useChatStore((state) => state.loadChat)
   const runAnalysis = useChatStore((state) => state.runAnalysis)
+  const generateOutput = useChatStore((state) => state.generateOutput)
   const reset = useChatStore((state) => state.reset)
 
   const { send, retry, abort, isStreaming, isConnecting } = useStream()
@@ -178,6 +182,10 @@ export default function Chat() {
         // Once there is an analysis the card is what you came back to read.
         defaultOpen={!analysis}
       />
+      <OutputsPanel
+        outputs={outputs}
+        documentName={activeChat.company ?? activeChat.title}
+      />
       {analysisArea}
     </>
   )
@@ -206,7 +214,19 @@ export default function Chat() {
         onRetry={() => void retry()}
         header={header}
         isConnecting={isConnecting}
+        documentName={activeChat.company ?? activeChat.title}
       />
+
+      {/* Offered only once there is an analysis to ground the document in, and
+          hidden while one is streaming so the chips cannot start a second. */}
+      {analysis && !isStreaming && (
+        <OutputActions
+          onGenerate={(outputType, userContext) =>
+            void generateOutput(outputType, userContext)
+          }
+          disabled={isAnalyzing}
+        />
+      )}
 
       <ChatInput
         onSend={(content) => void send(content)}

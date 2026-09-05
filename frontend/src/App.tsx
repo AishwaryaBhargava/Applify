@@ -2,7 +2,9 @@ import { useEffect, type ReactNode } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import Sidebar from './components/sidebar/Sidebar'
 import Spinner from './components/common/Spinner'
+import ToastHost from './components/common/ToastHost'
 import useAuth from './hooks/useAuth'
+import { useTrackerStore } from './store/trackerStore'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
 import Signup from './pages/Signup'
@@ -80,10 +82,20 @@ function RedirectIfAuthenticated({ children }: { children: ReactNode }) {
 
 /** Shell for authenticated pages: sidebar + main area. */
 function AppLayout({ children }: { children: ReactNode }) {
+  const fetchEntries = useTrackerStore((state) => state.fetchEntries)
+
+  // The tracker is loaded once per session, not once per navigation: the
+  // sidebar's Tracker badge reads from it on every page, and the store skips
+  // the request after the first. The tracker page itself forces a refetch.
+  useEffect(() => {
+    void fetchEntries()
+  }, [fetchEntries])
+
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
       <Sidebar />
       <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
+      <ToastHost />
     </div>
   )
 }

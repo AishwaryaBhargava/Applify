@@ -25,6 +25,14 @@ export default function Sidebar() {
   const resetProfile = useProfileStore((state) => state.reset)
   const resetChatList = useChatListStore((state) => state.reset)
   const resetTracker = useTrackerStore((state) => state.reset)
+  // The applications that are actually live — the only ones worth a number on
+  // the nav. Everything else is either not sent yet or already decided.
+  const liveApplications = useTrackerStore(
+    (state) =>
+      state.entries.filter(
+        (entry) => entry.status === 'interviewing' || entry.status === 'offer',
+      ).length,
+  )
   const sidebarOpen = useUiStore((state) => state.sidebarOpen)
   const closeSidebar = useUiStore((state) => state.closeSidebar)
 
@@ -93,7 +101,12 @@ export default function Sidebar() {
         <div className="flex flex-col gap-0.5 border-t border-border p-2">
           <NavItem to="/chat" label="Chat" icon={MessageSquare} end />
           <NavItem to="/profile" label="Profile" icon={User} />
-          <NavItem to="/tracker" label="Tracker" icon={Table2} />
+          <NavItem
+            to="/tracker"
+            label="Tracker"
+            icon={Table2}
+            badge={liveApplications}
+          />
           <NavItem to="/settings" label="Settings" icon={Settings} />
         </div>
 

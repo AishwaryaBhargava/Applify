@@ -1,30 +1,77 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { AlertCircle, Check, Copy, RotateCcw } from 'lucide-react'
+import {
+  AlertCircle,
+  Check,
+  ClipboardCheck,
+  Copy,
+  Download,
+  FileText,
+  Mail,
+  MessageSquare,
+  RotateCcw,
+  type LucideIcon,
+} from 'lucide-react'
 import TypingIndicator from './TypingIndicator'
-import Badge, { type BadgeTone } from '../common/Badge'
+import { downloadTextFile } from '../../lib/download'
+import { slugify } from '../../lib/format'
 import type { MessageKind, ThreadMessage } from '../../types'
 
 interface ChatMessageProps {
   message: ThreadMessage
   /** Offered on the errored bubble, which is always the last one. */
   onRetry?: () => void
+  /**
+   * What a downloaded document is named after — the company, falling back to
+   * the role. "Kestrel Labs" becomes `Kestrel-Labs-resume.md`.
+   */
+  documentName?: string
+}
+
+interface KindChip {
+  label: string
+  icon: LucideIcon
+  /** Light background plus its ink colour, per the brand palette. */
+  className: string
+  /** Documents get a Download button; an analysis is not one. */
+  fileSuffix?: string
 }
 
 /**
  * Header chips for messages that are not an ordinary turn, so a generated
  * document is recognisable at a glance in a long thread. `chat` gets none.
  */
-const KIND_LABELS: Partial<Record<MessageKind, { label: string; tone: BadgeTone }>> =
-  {
-    analysis: { label: 'Fit analysis', tone: 'amber' },
-    resume: { label: 'Tailored resume', tone: 'teal' },
-    cover_letter: { label: 'Cover letter', tone: 'coral' },
-    answer: { label: 'Application answer', tone: 'neutral' },
-  }
+const KIND_CHIPS: Partial<Record<MessageKind, KindChip>> = {
+  analysis: {
+    label: 'Fit analysis',
+    icon: ClipboardCheck,
+    className: 'bg-amber-light text-amber-ink',
+  },
+  resume: {
+    label: 'Tailored resume',
+    icon: FileText,
+    className: 'bg-teal-light text-teal-ink',
+    fileSuffix: 'resume',
+  },
+  cover_letter: {
+    label: 'Cover letter',
+    icon: Mail,
+    className: 'bg-coral-light text-coral-ink',
+    fileSuffix: 'cover-letter',
+  },
+  answer: {
+    label: 'Application answer',
+    icon: MessageSquare,
+    className: 'bg-amber-light text-amber-ink',
+  },
+}
 
 /** One message bubble: user on the right, assistant on the left. */
-export default function ChatMessage({ message, onRetry }: ChatMessageProps) {
+export default function ChatMessage({
+  message,
+  onRetry,
+  documentName,
+}: ChatMessageProps) {
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -37,6 +84,8 @@ export default function ChatMessage({ message, onRetry }: ChatMessageProps) {
 
   const copy = useCallback(async () => {
     try {
+      // The raw markdown, not the rendered text: what the user pastes into a
+      // document should be the document, headings and bullets intact.
       await navigator.clipboard.writeText(message.content)
       setCopied(true)
       copyTimer.current = setTimeout(() => setCopied(false), 1600)
@@ -48,8 +97,15 @@ export default function ChatMessage({ message, onRetry }: ChatMessageProps) {
   }, [message.content])
 
   const isUser = message.role === 'user'
-  const chip = isUser ? undefined : KIND_LABELS[message.kind]
+  const chip = isUser ? undefined : KIND_CHIPS[message.kind]
   const isTyping = Boolean(message.pending) && message.content.length === 0
+  const isDocument = Boolean(chip?.fileSuffix) && !message.pending
+
+  const download = useCallback(() => {
+    if (!chip?.fileSuffix) return
+    const base = slugify(documentName?.trim() || 'applify')
+    downloadTextFile(`${base}-${chip.fileSuffix}.md`, message.content)
+  }, [chip, documentName, message.content])
 
   if (isUser) {
     return (
@@ -61,9 +117,18 @@ export default function ChatMessage({ message, onRetry }: ChatMessageProps) {
     )
   }
 
+  const Icon = chip?.icon
+
   return (
     <div className="group flex flex-col items-start gap-1">
-      {chip && <Badge tone={chip.tone}>{chip.label}</Badge>}
+      {chip && Icon && (
+        <span
+          className={`inline-flex items-center gap-1.5 rounded-pill px-2 py-[3px] text-[11px] font-medium ${chip.className}`}
+        >
+          <Icon size={12} />
+          {chip.label}
+        </span>
+      )}
 
       <div className="max-w-[85%] rounded-box rounded-bl-[2px] bg-surface-warm px-3.5 py-2.5 text-[13px] leading-relaxed text-text-primary">
         {isTyping ? (
@@ -102,15 +167,29 @@ export default function ChatMessage({ message, onRetry }: ChatMessageProps) {
       )}
 
       {!message.pending && message.content.length > 0 && (
-        <button
-          type="button"
-          onClick={copy}
-          aria-label="Copy message"
-          className="flex items-center gap-1 text-[11px] text-text-faint opacity-0 transition-opacity hover:text-text-secondary focus:opacity-100 group-hover:opacity-100"
-        >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-          {copied ? 'Copied' : 'Copy'}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={copy}
+            aria-label="Copy message"
+            className="flex items-center gap-1 text-[11px] text-text-faint opacity-0 transition-opacity hover:text-text-secondary focus:opacity-100 group-hover:opacity-100"
+          >
+            {copied ? <Check size={12} /> : <Copy size={12} />}
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+
+          {isDocument && (
+            <button
+              type="button"
+              onClick={download}
+              aria-label="Download as markdown"
+              className="flex items-center gap-1 text-[11px] text-text-faint opacity-0 transition-opacity hover:text-text-secondary focus:opacity-100 group-hover:opacity-100"
+            >
+              <Download size={12} />
+              Download .md
+            </button>
+          )}
+        </div>
       )}
     </div>
   )

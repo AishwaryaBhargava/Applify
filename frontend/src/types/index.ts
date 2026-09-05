@@ -181,11 +181,21 @@ export interface StreamTokenEvent {
   content: string
 }
 
-/** Final frame on success: the full text as it was persisted. */
+/**
+ * Final frame on success: the full text as it was persisted.
+ *
+ * A document turn — one whose `start` named a `kind` other than `chat`, whether
+ * it came from the intent router or from `POST /chats/{id}/outputs` — carries
+ * two extra fields: the id of the `generated_outputs` row it was filed under,
+ * and, for a resume, the tracker's new `resume_type`. Both are what let the
+ * tracker and the outputs list update without a refetch.
+ */
 export interface StreamDoneEvent {
   type: 'done'
   message_id: string
   content: string
+  output_id?: string
+  resume_type?: ResumeType
 }
 
 /**
@@ -274,17 +284,34 @@ export type TrackerStatus =
 /** Mirrors `ResumeType` in backend/app/api/schemas/tracker.py. */
 export type ResumeType = 'unaltered' | 'tailored'
 
+/**
+ * A tracker row, flattened for the Phase 8 table: everything a row renders
+ * comes from this one object. Mirrors `TrackerEntry` in
+ * backend/app/api/schemas/tracker.py.
+ *
+ * `job_title` and `date_added` are the server's names; `title` and
+ * `created_at` are the Phase 6 names the sidebar's optimistic row still uses,
+ * and the backend sends both. Read them through `entryTitle` / `entryDate` in
+ * lib/format.ts rather than picking one here.
+ */
 export interface TrackerEntry {
   id: string
   chat_id: string
   /** Absent on the optimistic entry the sidebar creates alongside a chat. */
   user_id?: string
-  title: string | null
+  /** The chat's title. Absent only on a locally-created optimistic row. */
+  job_title?: string | null
+  /** The Phase 6 alias for `job_title`; the backend sends both. */
+  title?: string | null
   company: string | null
-  /** Denormalised for the Phase 8 table; not sent by GET /tracker today. */
+  /** When the chat was started. Falls back to `created_at` when absent. */
+  date_added?: string | null
+  /** null until an analysis has been run, then the depth that ran. */
   analysis_type?: AnalysisType | null
   status: TrackerStatus
   resume_type: ResumeType
+  /** From the chat's analysis, when it has one. */
+  fit_score?: number | null
   created_at: string
   updated_at: string
 }

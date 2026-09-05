@@ -87,19 +87,24 @@ async function errorDetail(response: Response, fallback: string): Promise<string
 }
 
 /**
- * POST /chats/{id}/messages and consume the SSE reply.
+ * POST a JSON body to an Applify SSE endpoint and consume the reply.
  *
  * `EventSource` cannot be used here: it is GET-only and cannot carry an
  * Authorization header. So this posts with `fetch`, reads `response.body` with
  * a `ReadableStream` reader, and splits SSE frames by hand.
  *
+ * Shared by both streaming endpoints. `POST /chats/{id}/messages` and
+ * `POST /chats/{id}/outputs` emit byte-identical frames — the backend reuses
+ * one generator for both — so the transport has exactly one definition here
+ * and the callers differ only in the URL and the body they post.
+ *
  * Resolves when the stream ends. It never rejects: a rejected request, a
  * transport failure mid-stream, and an abort all arrive through `onError`, so
  * a caller has exactly one failure path to handle.
  */
-export async function streamMessage(
-  chatId: string,
-  content: string,
+export async function streamSSE(
+  url: string,
+  body: unknown,
   handlers: StreamHandlers = {},
   signal?: AbortSignal,
 ): Promise<void> {
@@ -107,14 +112,14 @@ export async function streamMessage(
 
   let response: Response
   try {
-    response = await fetch(messageStreamUrl(chatId), {
+    response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(body),
       signal,
     })
   } catch (error) {
@@ -194,6 +199,22 @@ export async function streamMessage(
       // Already released by the abort; nothing to do.
     }
   }
+}
+
+/**
+ * POST /chats/{id}/messages — an ordinary chat turn.
+ *
+ * The reply's `kind` is whatever the backend's intent router decided: a plain
+ * answer, or a generated document when the user simply asked for one in words.
+ * The caller handles both identically, because the frames are identical.
+ */
+export async function streamMessage(
+  chatId: string,
+  content: string,
+  handlers: StreamHandlers = {},
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamSSE(messageStreamUrl(chatId), { content }, handlers, signal)
 }
 
 /** Routes one parsed event to its handler. */

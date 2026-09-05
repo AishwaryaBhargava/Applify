@@ -3,7 +3,9 @@ import { apiErrorMessage, apiErrorStatus } from '../services/api'
 import { runAnalysis as runAnalysisRequest } from '../services/analysis'
 import { getChat } from '../services/chats'
 import { listMessages, streamMessage } from '../services/messages'
+import { listOutputs, streamOutput } from '../services/outputs'
 import { useChatListStore } from './chatListStore'
+import { pushToast } from './toastStore'
 import { useTrackerStore } from './trackerStore'
 import type {
   Analysis,
@@ -12,6 +14,10 @@ import type {
   GeneratedOutput,
   JobChat,
   MessageKind,
+  OutputType,
+  StreamDoneEvent,
+  StreamErrorEvent,
+  StreamStartEvent,
   ThreadMessage,
 } from '../types'
 
@@ -30,6 +36,56 @@ let controller: AbortController | null = null
  * instead of overwriting the chat now on screen.
  */
 let loadToken = 0
+
+/**
+ * The user turn each output button stands for. Mirrors `BUTTON_MESSAGES` in
+ * backend/app/api/routes/outputs.py: the server persists exactly this text, so
+ * the optimistic bubble and the stored row have to read the same or a reload
+ * would silently rewrite what the user "said".
+ */
+const BUTTON_MESSAGES: Record<OutputType, string> = {
+  resume: 'Generate a tailored resume for this role',
+  cover_letter: 'Write a cover letter for this role',
+  answer: 'Answer this application question',
+}
+
+/** The message kinds that are generated documents rather than a chat turn. */
+const OUTPUT_KINDS: OutputType[] = ['resume', 'cover_letter', 'answer']
+
+function isOutputKind(kind: MessageKind): kind is OutputType {
+  return (OUTPUT_KINDS as MessageKind[]).includes(kind)
+}
+
+/** Composes the user message an output button stands for. */
+export function buttonMessage(
+  outputType: OutputType,
+  userContext?: string | null,
+): string {
+  const context = (userContext ?? '').trim()
+  const base = BUTTON_MESSAGES[outputType]
+  return context ? `${base}: ${context}` : base
+}
+
+/**
+ * One streamed turn, described well enough to be replayed on a retry: the
+ * message path posts to `/messages`, the button path to `/outputs`, and only
+ * the request itself knows which of the two produced the bubble on screen.
+ */
+type StreamRequest =
+  | { mode: 'message'; content: string }
+  | {
+      mode: 'output'
+      outputType: OutputType
+      userContext?: string
+      content: string
+    }
+
+/**
+ * The request behind the turn now on screen, so `retryLast` re-posts to the
+ * endpoint that produced it. Module scope for the same reason as the abort
+ * controller: nothing renders from it.
+ */
+let lastRequest: StreamRequest | null = null
 
 /** A unique id for a client-side message, with a fallback for old browsers. */
 function localId(prefix: string): string {
@@ -73,9 +129,14 @@ export interface ChatState {
   setActiveChat: (chat: JobChat | null) => void
   setMessages: (messages: ThreadMessage[]) => void
   setAnalysis: (analysis: Analysis | null) => void
+  setOutputs: (outputs: GeneratedOutput[]) => void
+  /** Inserts newest-first, replacing any earlier copy of the same output. */
   addOutput: (output: GeneratedOutput) => void
+  /** Files a finished document and flips the tracker when it was a resume. */
+  recordOutput: (kind: OutputType, event: StreamDoneEvent) => void
 
   loadChat: (chatId: string) => Promise<void>
+  fetchOutputs: (chatId?: string) => Promise<void>
   runAnalysis: (type: AnalysisType, force?: boolean) => Promise<void>
 
   appendUserMessage: (content: string) => void
@@ -89,6 +150,11 @@ export interface ChatState {
   ) => void
 
   sendMessage: (content: string) => Promise<void>
+  /** Asks for a document explicitly, through POST /chats/{id}/outputs. */
+  generateOutput: (
+    outputType: OutputType,
+    userContext?: string,
+  ) => Promise<void>
   /** Re-sends the last user turn after a failed or stopped stream. */
   retryLast: () => Promise<void>
   abortStream: () => void
@@ -118,8 +184,52 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setActiveChat: (activeChat) => set({ activeChat }),
   setMessages: (messages) => set({ messages }),
   setAnalysis: (analysis) => set({ analysis }),
+  setOutputs: (outputs) => set({ outputs }),
   addOutput: (output) =>
-    set((state) => ({ outputs: [...state.outputs, output] })),
+    set((state) => ({
+      outputs: [
+        output,
+        ...state.outputs.filter((row) => row.id !== output.id),
+      ],
+    })),
+
+  /**
+   * What a finished document changes beyond the bubble it streamed into.
+   *
+   * The `done` frame carries the id the output was filed under and, for a
+   * resume, the tracker's new `resume_type` — so the outputs list, the sidebar
+   * row and the tracker table are all correct the moment the last token lands,
+   * with no refetch. A resume asked for in plain words arrives through exactly
+   * the same frames, so both paths land here.
+   */
+  recordOutput: (kind, event) => {
+    const chat = get().activeChat
+    if (!chat) return
+
+    if (event.output_id) {
+      get().addOutput({
+        id: event.output_id,
+        chat_id: chat.id,
+        output_type: kind,
+        content: event.content,
+        created_at: new Date().toISOString(),
+      })
+    }
+
+    if (kind !== 'resume') return
+
+    const resumeType = event.resume_type ?? 'tailored'
+    set((state) => ({
+      activeChat: state.activeChat
+        ? { ...state.activeChat, resume_type: resumeType }
+        : state.activeChat,
+    }))
+    useChatListStore.getState().updateChat(chat.id, { resume_type: resumeType })
+    useTrackerStore
+      .getState()
+      .updateEntry(chat.id, { resume_type: resumeType })
+    pushToast('Tracker updated: AI-tailored resume', 'success')
+  },
 
   clearError: () => set({ error: null }),
   clearAnalysisError: () => set({ analysisError: null, analysisErrorStatus: null }),
@@ -131,6 +241,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
    */
   loadChat: async (chatId) => {
     get().abortStream()
+    lastRequest = null
     const token = ++loadToken
     const switching = get().activeChat?.id !== chatId
 
@@ -159,6 +270,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
       // The sidebar row may predate the analysis; keep the two in step.
       useChatListStore.getState().updateChat(chatId, chat)
+      // The documents already generated here, for the outputs list. Not
+      // awaited: the thread is readable without it.
+      void get().fetchOutputs(chatId)
     } catch (error) {
       if (token !== loadToken) return
       const status = apiErrorStatus(error)
@@ -171,6 +285,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
       // A 404 means it was deleted elsewhere; drop it from the sidebar too.
       if (status === 404) useChatListStore.getState().removeChat(chatId)
+    }
+  },
+
+  /**
+   * GET /chats/{id}/outputs — the documents generated in this chat.
+   *
+   * Failure is swallowed on purpose: this is a history list beside the thread,
+   * and the documents themselves are already in the messages. An empty section
+   * is a better answer than an error banner over a chat that works.
+   */
+  fetchOutputs: async (chatId) => {
+    const id = chatId ?? get().activeChat?.id
+    if (!id) return
+    try {
+      const outputs = await listOutputs(id)
+      if (get().activeChat?.id === id) set({ outputs })
+    } catch {
+      // Older backend (501 before Phase 7) or a transport failure.
     }
   },
 
@@ -358,7 +490,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!text || !chat || get().isStreaming) return
 
     get().appendUserMessage(text)
-    await runStream(chat.id, text, set, get)
+    await runStream(chat.id, { mode: 'message', content: text }, set, get)
+  },
+
+  /**
+   * The quick-action path: asks for a document by name rather than by phrasing
+   * it in chat. The backend persists the same user turn either way, so the
+   * thread reads identically whichever route the user took.
+   */
+  generateOutput: async (outputType, userContext) => {
+    const chat = get().activeChat
+    if (!chat || get().isStreaming) return
+
+    const content = buttonMessage(outputType, userContext)
+    get().appendUserMessage(content)
+    await runStream(
+      chat.id,
+      { mode: 'output', outputType, userContext, content },
+      set,
+      get,
+    )
   },
 
   /**
@@ -397,7 +548,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!lastUser) return
 
     set({ messages: messages.filter((_, i) => i !== failedIndex) })
-    await runStream(chat.id, lastUser.content, set, get)
+    // A document asked for through a button has to be retried against
+    // /outputs: re-posting its user turn to /messages would leave the document
+    // type to intent detection, which is not what the user clicked.
+    const request: StreamRequest =
+      lastRequest && lastRequest.content === lastUser.content
+        ? lastRequest
+        : { mode: 'message', content: lastUser.content }
+    await runStream(chat.id, request, set, get)
   },
 
   abortStream: () => {
@@ -408,6 +566,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   reset: () => {
     controller?.abort()
     controller = null
+    lastRequest = null
     loadToken += 1
     set({ ...emptyChat })
   },
@@ -419,20 +578,24 @@ type SetState = (
 type GetState = () => ChatState
 
 /**
- * Drives one streamed reply from POST to the last frame.
+ * Drives one streamed turn from POST to the last frame.
  *
- * Shared by `sendMessage` and `retryLast` so the two differ only in whether
- * the user's bubble is appended first.
+ * Shared by `sendMessage`, `generateOutput` and `retryLast`. The two endpoints
+ * emit byte-identical frames — the backend reuses one generator for both — so
+ * only the first line here differs between them, and everything downstream,
+ * including a document that arrived because the user simply asked for one in
+ * words, is handled in exactly one place.
  */
 async function runStream(
   chatId: string,
-  content: string,
+  request: StreamRequest,
   set: SetState,
   get: GetState,
 ): Promise<void> {
   controller?.abort()
   controller = new AbortController()
   const signal = controller.signal
+  lastRequest = request
 
   set({ isStreaming: true, streamingMessageId: null, error: null })
 
@@ -441,34 +604,51 @@ async function runStream(
   // must not append a bubble to the thread that replaced it.
   const stillHere = () => get().activeChat?.id === chatId
 
-  await streamMessage(
-    chatId,
-    content,
-    {
-      onStart: (event) => {
-        if (stillHere()) get().startAssistantMessage(event.message_id, event.kind)
-      },
-      onToken: (token) => {
-        if (stillHere()) get().appendToken(token)
-      },
-      onDone: (event) => {
-        if (stillHere()) {
-          get().finalizeAssistantMessage(event.message_id, event.content)
-        }
-      },
-      onError: (event) => {
-        if (stillHere()) {
-          get().markError(
-            event.message,
-            event.content,
-            // Only a persisted partial has a row behind its id.
-            event.partial ? event.message_id : undefined,
-          )
-        }
-      },
+  // The kind the server announced, so `done` knows whether this turn was a
+  // document. It is authoritative over what was asked for: the intent router
+  // may answer a "write me a cover letter" message with kind cover_letter.
+  let kind: MessageKind = 'chat'
+
+  const handlers = {
+    onStart: (event: StreamStartEvent) => {
+      if (!stillHere()) return
+      kind = event.kind
+      get().startAssistantMessage(event.message_id, event.kind)
     },
-    signal,
-  )
+    onToken: (token: string) => {
+      if (stillHere()) get().appendToken(token)
+    },
+    onDone: (event: StreamDoneEvent) => {
+      if (!stillHere()) return
+      get().finalizeAssistantMessage(event.message_id, event.content)
+      if (isOutputKind(kind)) get().recordOutput(kind, event)
+    },
+    onError: (event: StreamErrorEvent) => {
+      if (!stillHere()) return
+      get().markError(
+        event.message,
+        event.content,
+        // Only a persisted partial has a row behind its id.
+        event.partial ? event.message_id : undefined,
+      )
+    },
+  }
+
+  if (request.mode === 'output') {
+    await streamOutput(
+      chatId,
+      {
+        output_type: request.outputType,
+        ...(request.userContext?.trim()
+          ? { user_context: request.userContext.trim() }
+          : {}),
+      },
+      handlers,
+      signal,
+    )
+  } else {
+    await streamMessage(chatId, request.content, handlers, signal)
+  }
 
   // A newer stream may already own the controller; only clear our own.
   if (controller?.signal === signal) controller = null

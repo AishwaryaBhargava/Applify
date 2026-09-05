@@ -15,6 +15,8 @@ interface ChatThreadProps {
    * this the send would land in silence.
    */
   isConnecting?: boolean
+  /** Passed to each bubble: what a downloaded document is named after. */
+  documentName?: string
 }
 
 /** Length of the newest message, so auto-scroll keeps up token by token. */
@@ -36,6 +38,7 @@ export default function ChatThread({
   onRetry,
   header,
   isConnecting = false,
+  documentName,
 }: ChatThreadProps) {
   const { ref } = useAutoScroll<HTMLDivElement>([
     messages.length,
@@ -61,6 +64,7 @@ export default function ChatThread({
             key={message.id}
             message={message}
             onRetry={index === lastErroredIndex ? onRetry : undefined}
+            documentName={documentName}
           />
         ))}
 

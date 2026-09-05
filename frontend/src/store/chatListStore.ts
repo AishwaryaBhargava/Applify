@@ -12,11 +12,16 @@ function trackerEntryFor(chat: JobChat): TrackerEntry {
     // The prefix makes an unsynced row obvious if one shows up in a log.
     id: `local:${chat.id}`,
     chat_id: chat.id,
+    // Both names, as GET /tracker sends them: `job_title` is the server's,
+    // `title` the one this store has always written.
+    job_title: chat.title,
     title: chat.title,
     company: chat.company,
+    date_added: chat.created_at,
     analysis_type: chat.analysis_type,
     status: 'not_applied',
     resume_type: chat.resume_type,
+    fit_score: null,
     created_at: chat.created_at,
     updated_at: chat.created_at,
   }

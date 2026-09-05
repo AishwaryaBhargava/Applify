@@ -1,37 +1,48 @@
+import { ChevronDown } from 'lucide-react'
+import { STATUS_CLASSES, STATUS_LABELS, STATUS_ORDER } from './statuses'
 import type { TrackerStatus } from '../../types'
 
 interface StatusPickerProps {
   value?: TrackerStatus
   onChange?: (status: TrackerStatus) => void
-}
-
-const STATUS_LABELS: Record<TrackerStatus, string> = {
-  not_applied: 'Not Applied',
-  applied: 'Applied',
-  interviewing: 'Interviewing',
-  offer: 'Offer',
-  rejected: 'Rejected',
+  disabled?: boolean
 }
 
 /**
- * Dropdown for updating application status.
- * TODO(Phase 8): call PATCH /tracker/{chat_id} through trackerStore.
+ * The status dropdown, drawn as the badge it sets.
+ *
+ * A native `<select>` under a coloured pill: it keeps keyboard support, the
+ * mobile wheel picker, and the accessible name for free, which a hand-rolled
+ * menu would all have to earn back. The chevron is drawn separately because
+ * `appearance-none` takes the platform one away with the platform styling.
  */
 export default function StatusPicker({
   value = 'not_applied',
   onChange,
+  disabled = false,
 }: StatusPickerProps) {
   return (
-    <select
-      value={value}
-      onChange={(event) => onChange?.(event.target.value as TrackerStatus)}
-      className="rounded-input border border-border bg-card px-2.5 py-1.5 text-[12px] text-text-primary outline-none focus:border-teal-soft"
+    <span
+      className={`relative inline-flex items-center rounded-pill text-[12px] font-medium ${STATUS_CLASSES[value]} ${disabled ? 'opacity-60' : ''}`}
     >
-      {(Object.keys(STATUS_LABELS) as TrackerStatus[]).map((status) => (
-        <option key={status} value={status}>
-          {STATUS_LABELS[status]}
-        </option>
-      ))}
-    </select>
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange?.(event.target.value as TrackerStatus)}
+        aria-label="Application status"
+        className="cursor-pointer appearance-none rounded-pill bg-transparent py-[5px] pl-2.5 pr-7 text-inherit outline-none focus:ring-1 focus:ring-teal-deep disabled:cursor-default"
+      >
+        {STATUS_ORDER.map((status) => (
+          <option key={status} value={status} className="bg-card text-text-primary">
+            {STATUS_LABELS[status]}
+          </option>
+        ))}
+      </select>
+      <ChevronDown
+        size={12}
+        aria-hidden="true"
+        className="pointer-events-none absolute right-2 opacity-70"
+      />
+    </span>
   )
 }
