@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { apiErrorMessage } from '../services/api'
 import * as chatsService from '../services/chats'
+import { pushToast } from './toastStore'
 import { useTrackerStore } from './trackerStore'
 import type { JobChat, TrackerEntry } from '../types'
 
@@ -109,9 +110,14 @@ export const useChatListStore = create<ChatListState>()(
           useTrackerStore.getState().addEntry(trackerEntryFor(chat))
           return chat
         } catch (error) {
-          set({
-            error: apiErrorMessage(error, 'Could not create that job chat.'),
-          })
+          const message = apiErrorMessage(
+            error,
+            'Could not create that job chat.',
+          )
+          // Shown inline under the modal's form as well: the toast is what
+          // survives the modal being closed on the failure.
+          set({ error: message })
+          pushToast(message, 'error')
           return null
         }
       },
@@ -124,10 +130,14 @@ export const useChatListStore = create<ChatListState>()(
           await chatsService.deleteChat(chatId)
           return true
         } catch (error) {
-          set({
-            chats: previous,
-            error: apiErrorMessage(error, 'Could not delete that job chat.'),
-          })
+          const message = apiErrorMessage(
+            error,
+            'Could not delete that job chat.',
+          )
+          // The row reappearing is the only other signal, and on its own that
+          // reads as a bug in the list rather than a failed request.
+          set({ chats: previous, error: message })
+          pushToast(message, 'error')
           return false
         }
       },

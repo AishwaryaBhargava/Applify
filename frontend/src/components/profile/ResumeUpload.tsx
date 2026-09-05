@@ -4,6 +4,7 @@ import { Check, FileText, UploadCloud, X } from 'lucide-react'
 import { uploadResume } from '../../services/profile'
 import { apiErrorMessage } from '../../services/api'
 import { useProfileStore } from '../../store/profileStore'
+import { pushToast } from '../../store/toastStore'
 import useAuth from '../../hooks/useAuth'
 import Spinner from '../common/Spinner'
 import type { Profile } from '../../types'
@@ -153,14 +154,16 @@ export default function ResumeUpload({
       setStage('done')
       navigate(redirectTo, { replace: true })
     } catch (uploadError) {
+      const message = apiErrorMessage(
+        uploadError,
+        'We could not parse that resume. Please try again.',
+      )
       setStage('idle')
       setProgress(0)
-      setError(
-        apiErrorMessage(
-          uploadError,
-          'We could not parse that resume. Please try again.',
-        ),
-      )
+      // Inline under the dropzone, where the Upload button still is, plus a
+      // toast so a failure after a long parse is not missed.
+      setError(message)
+      pushToast(message, 'error')
     } finally {
       if (parsingTimerRef.current) {
         window.clearTimeout(parsingTimerRef.current)

@@ -113,8 +113,17 @@ export async function getProfile(): Promise<ProfileResult> {
 }
 
 /**
+ * A resume upload is a file transfer followed by an LLM parse on the server,
+ * so it needs far longer than an ordinary call. Four times the default.
+ */
+export const UPLOAD_TIMEOUT_MS = 120_000
+
+/**
  * POST /profile/upload — multipart resume upload (PDF or DOCX).
+ *
  * Throws on failure so the caller can show the message and offer a retry.
+ * Deliberately excluded from the automatic retry in services/api: a repeat
+ * would bill a second parse of a file the first attempt may well have stored.
  */
 export async function uploadResume(
   file: File,
@@ -124,6 +133,7 @@ export async function uploadResume(
   form.append('file', file)
   const { data } = await api.post<Profile>('/profile/upload', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: UPLOAD_TIMEOUT_MS,
     onUploadProgress,
   })
   return normalizeProfile(data)

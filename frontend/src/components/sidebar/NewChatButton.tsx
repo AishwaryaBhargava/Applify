@@ -6,8 +6,11 @@ import { useChatListStore } from '../../store/chatListStore'
 import { useUiStore } from '../../store/uiStore'
 
 interface NewChatButtonProps {
-  /** `sidebar` fills its column; `inline` sits in the empty state. */
-  variant?: 'sidebar' | 'inline'
+  /**
+   * `sidebar` fills its column, `inline` sits in a page's empty state, and
+   * `compact` is the smaller version for the narrow sidebar empty state.
+   */
+  variant?: 'sidebar' | 'inline' | 'compact'
   label?: string
   className?: string
 }
@@ -43,10 +46,11 @@ export default function NewChatButton({
 
   const base =
     'flex items-center justify-center gap-2 rounded-btn bg-coral font-medium text-white transition-opacity hover:opacity-90'
-  const sizing =
-    variant === 'sidebar'
-      ? 'w-full px-3 py-2.5 text-[13px]'
-      : 'px-5 py-2.5 text-[14px]'
+  const sizing = {
+    sidebar: 'w-full px-3 py-2.5 text-[13px]',
+    inline: 'px-5 py-2.5 text-[14px]',
+    compact: 'w-full px-3 py-2 text-[12px]',
+  }[variant]
 
   return (
     <>

@@ -16,6 +16,7 @@ import OutputsPanel from '../components/chat/OutputsPanel'
 import NewChatButton from '../components/sidebar/NewChatButton'
 import ResumeNudgeBanner from '../components/profile/ResumeNudgeBanner'
 import useStream from '../hooks/useStream'
+import { readDefaultAnalysisType } from '../lib/preferences'
 import { NO_PROFILE_STATUS, useChatStore } from '../store/chatStore'
 import { useUiStore } from '../store/uiStore'
 import type { AnalysisType } from '../types'
@@ -84,6 +85,11 @@ export default function Chat() {
 
   const { send, retry, abort, isStreaming, isConnecting } = useStream()
 
+  // The depth chosen in Settings. Read on every render rather than held in
+  // state: it is one localStorage lookup, and it means a change made in
+  // another tab is reflected the next time this page draws.
+  const preferredAnalysis = readDefaultAnalysisType()
+
   useEffect(() => {
     if (id) void loadChat(id)
     else reset()
@@ -144,6 +150,7 @@ export default function Chat() {
       <AnalysisTypeSelector
         onSelect={(type) => void runAnalysis(type)}
         disabled={isAnalyzing}
+        preferred={preferredAnalysis}
       />
 
       {needsResume ? (

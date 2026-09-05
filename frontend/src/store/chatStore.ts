@@ -344,14 +344,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
         .getState()
         .updateEntry(chat.id, { analysis_type: analysis.type })
     } catch (error) {
+      const status = apiErrorStatus(error) ?? null
+      const message = apiErrorMessage(
+        error,
+        'The analysis could not be completed. Please try again.',
+      )
       set({
         isAnalyzing: false,
-        analysisErrorStatus: apiErrorStatus(error) ?? null,
-        analysisError: apiErrorMessage(
-          error,
-          'The analysis could not be completed. Please try again.',
-        ),
+        analysisErrorStatus: status,
+        analysisError: message,
       })
+      // The inline block under the picker explains what to do; the toast is
+      // what makes the failure impossible to miss when the picker has been
+      // scrolled past. A missing profile is a precondition rather than a
+      // fault, so it gets the short version.
+      pushToast(
+        status === NO_PROFILE_STATUS
+          ? 'Upload your resume to run an analysis'
+          : message,
+        'error',
+      )
     }
   },
 
@@ -631,6 +643,8 @@ async function runStream(
         // Only a persisted partial has a row behind its id.
         event.partial ? event.message_id : undefined,
       )
+      // Stopping is something the user did, not something that went wrong.
+      if (!signal.aborted) pushToast(event.message, 'error')
     },
   }
 
@@ -657,7 +671,9 @@ async function runStream(
   // clean but early. Leaving the bubble pending would spin forever, so end it
   // the same way a failure does: partial text, and a retry.
   if (stillHere() && get().isStreaming) {
-    get().markError('The reply ended before it finished.')
+    const message = 'The reply ended before it finished.'
+    get().markError(message)
+    if (!signal.aborted) pushToast(message, 'error')
   }
 }
 

@@ -7,8 +7,7 @@ import ChatList from './ChatList'
 import NavItem from './NavItem'
 import NewChatButton from './NewChatButton'
 import useAuth from '../../hooks/useAuth'
-import { useProfileStore } from '../../store/profileStore'
-import { useChatListStore } from '../../store/chatListStore'
+import { endSession } from '../../store/session'
 import { useTrackerStore } from '../../store/trackerStore'
 import { useUiStore } from '../../store/uiStore'
 
@@ -21,10 +20,7 @@ import { useUiStore } from '../../store/uiStore'
 export default function Sidebar() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { isAuthenticated, displayName, user, signOut, isSubmitting } = useAuth()
-  const resetProfile = useProfileStore((state) => state.reset)
-  const resetChatList = useChatListStore((state) => state.reset)
-  const resetTracker = useTrackerStore((state) => state.reset)
+  const { isAuthenticated, displayName, user, isSubmitting } = useAuth()
   // The applications that are actually live — the only ones worth a number on
   // the nav. Everything else is either not sent yet or already decided.
   const liveApplications = useTrackerStore(
@@ -51,11 +47,10 @@ export default function Sidebar() {
   }, [sidebarOpen, closeSidebar])
 
   async function handleSignOut() {
-    await signOut()
-    // Drop everything persisted for this user so the next one starts clean.
-    resetProfile()
-    resetChatList()
-    resetTracker()
+    // Signs out and drops everything persisted for this user, so the next
+    // person on this machine starts clean. Shared with the Settings page and
+    // with the expired-session path in services/api.
+    await endSession()
     navigate('/login', { replace: true })
   }
 

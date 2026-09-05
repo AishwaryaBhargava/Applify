@@ -7,6 +7,20 @@ interface AnalysisTypeSelectorProps {
   disabled?: boolean
   /** The depth currently running, so only that card shows a spinner. */
   running?: AnalysisType | null
+  /**
+   * The depth chosen in Settings. It marks a card, nothing more: pre-selecting
+   * would hide the cost and latency difference behind a default, so the user
+   * still presses the button.
+   */
+  preferred?: AnalysisType | null
+}
+
+/** Teal outline on the card Settings prefers, plain border on the other. */
+function cardClasses(isPreferred: boolean): string {
+  return [
+    'flex flex-col rounded-card border bg-card p-4',
+    isPreferred ? 'border-teal-deep' : 'border-border',
+  ].join(' ')
 }
 
 /**
@@ -18,11 +32,21 @@ export default function AnalysisTypeSelector({
   onSelect,
   disabled = false,
   running = null,
+  preferred = null,
 }: AnalysisTypeSelectorProps) {
+  const yourDefault = (
+    <span className="rounded-pill bg-teal-light px-2 py-[2px] text-[10px] font-medium text-teal-ink">
+      Your default
+    </span>
+  )
+
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      <article className="flex flex-col rounded-card border border-border bg-card p-4">
-        <Gauge size={18} className="mb-2 text-teal-deep" />
+      <article className={cardClasses(preferred === 'quick')}>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <Gauge size={18} className="text-teal-deep" />
+          {preferred === 'quick' && yourDefault}
+        </div>
         <h3 className="text-[14px] font-medium text-text-primary">
           Quick snapshot
         </h3>
@@ -41,8 +65,11 @@ export default function AnalysisTypeSelector({
         </button>
       </article>
 
-      <article className="flex flex-col rounded-card border border-border bg-card p-4">
-        <Microscope size={18} className="mb-2 text-coral" />
+      <article className={cardClasses(preferred === 'detailed')}>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <Microscope size={18} className="text-coral" />
+          {preferred === 'detailed' && yourDefault}
+        </div>
         <h3 className="text-[14px] font-medium text-text-primary">
           Detailed breakdown
         </h3>

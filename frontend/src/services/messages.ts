@@ -1,4 +1,4 @@
-import api from './api'
+import api, { RATE_LIMITED_MESSAGE } from './api'
 import { supabase } from '../lib/supabase'
 import type {
   ChatMessage,
@@ -74,16 +74,46 @@ function parseFrame(raw: string): StreamEvent | null {
   return null
 }
 
-/** Best-effort `detail` from a non-2xx response body. */
-async function errorDetail(response: Response, fallback: string): Promise<string> {
+/** Anything the model providers report as "slow down", in the SSE path. */
+const RATE_LIMIT_PATTERN =
+  /rate.?limit|too many requests|quota|capacity|overloaded|try again later/i
+
+/**
+ * The message to show for a rejected stream.
+ *
+ * The SSE endpoints do not go through Axios, so the mapping services/api does
+ * for ordinary requests — rate limits into one sentence, an expired session
+ * into a sign-out — has to be repeated here against the raw Response.
+ */
+async function rejectionMessage(response: Response): Promise<string> {
+  let detail = ''
   try {
     const body: unknown = await response.json()
-    const detail = (body as { detail?: unknown } | null)?.detail
-    if (typeof detail === 'string' && detail.trim()) return detail
+    const raw = (body as { detail?: unknown } | null)?.detail
+    if (typeof raw === 'string') detail = raw
   } catch {
-    // Empty or non-JSON body: fall through to the generic message.
+    // Empty or non-JSON body: fall through to the status-based message.
   }
-  return fallback
+
+  if (response.status === 401) {
+    // The token expired mid-session; the app shell signs the user out.
+    void import('../store/sessionExpired').then(({ handleSessionExpired }) =>
+      handleSessionExpired(),
+    )
+    return 'Your session expired. Sign in again to pick this up.'
+  }
+
+  const rateLimited =
+    response.status === 429 ||
+    ((response.status === 502 || response.status === 503) &&
+      RATE_LIMIT_PATTERN.test(detail))
+  if (rateLimited) return RATE_LIMITED_MESSAGE
+
+  if (detail.trim()) return detail
+  if (response.status >= 500) {
+    return 'The Applify server hit an error. Please try again in a moment.'
+  }
+  return `The server could not answer that (${response.status}).`
 }
 
 /**
@@ -136,10 +166,7 @@ export async function streamSSE(
   if (!response.ok) {
     handlers.onError?.({
       type: 'error',
-      message: await errorDetail(
-        response,
-        `The server could not answer that (${response.status}).`,
-      ),
+      message: await rejectionMessage(response),
     })
     return
   }

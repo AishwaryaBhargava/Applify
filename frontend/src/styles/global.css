@@ -2,8 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Applify design tokens — mirrors designs/brand-colors.md and tailwind.config.js */
+/*
+ * Applify is a light-only brand: the palette in designs/brand-colors.md has no
+ * dark counterpart, and inventing one would mean re-deciding every token.
+ * `color-scheme: light` is the honest version of that — it tells the browser to
+ * keep form controls, scrollbars and autofill in their light treatment even
+ * when the OS is set to dark, instead of letting half the UI invert while our
+ * own surfaces stay cream.
+ *
+ * This is a deliberate deviation from the pipeline's "verify all CSS variables
+ * render correctly in dark theme" line: there is no dark theme to verify.
+ */
 :root {
+  color-scheme: light;
+
   /* Primary palette */
   --color-teal-deep: #0f6e56;
   --color-teal-medium: #1d9e75;
@@ -150,4 +162,41 @@
   .md-body td {
     @apply border-b border-border py-1.5 pr-3;
   }
+}
+
+/*
+ * Placed after the Tailwind layers on purpose: these rules and the utilities
+ * they correct (`outline-none` on inputs, buttons with no disabled treatment)
+ * have the same specificity, so source order is what decides.
+ */
+
+/* One visible keyboard focus ring, in the brand's teal, on everything that can
+   take focus. Mouse users never see it — :focus-visible is the whole point. */
+:focus-visible {
+  outline: 2px solid #1d9e75;
+  outline-offset: 2px;
+}
+
+/* A disabled control should look disabled even where the component forgot to
+   say so. Components that set their own `disabled:` utilities still win. */
+button:disabled,
+[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled {
+  cursor: not-allowed;
+}
+
+/* Form controls inherit the page font rather than the browser's, and stay in
+   the light scheme whatever the OS says. */
+input,
+textarea,
+select,
+button {
+  color-scheme: light;
+  font-family: inherit;
 }

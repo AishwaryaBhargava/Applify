@@ -12,10 +12,12 @@ export default function ToastHost() {
 
   if (toasts.length === 0) return null
 
+  /* z-[60] puts the stack above the modals (z-50): a failure raised by a
+     dialog's own action has to be readable while that dialog is still open. */
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-[calc(100vw-2rem)] max-w-sm flex-col gap-2"
+      className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-[calc(100vw-2rem)] max-w-sm flex-col gap-2"
     >
       {toasts.map((toast) => (
         <div key={toast.id} className="pointer-events-auto">

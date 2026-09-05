@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { apiErrorMessage } from '../services/api'
 import { getProfile, getProfileGaps, updateProfile } from '../services/profile'
+import { pushToast } from './toastStore'
 import type { ParsedProfile, Profile, ProfileGap, ProfileSectionKey } from '../types'
 
 /**
@@ -126,6 +127,9 @@ export const useProfileStore = create<ProfileState>()(
           // Roll the store back to the last server-confirmed profile. The
           // section editor keeps its own draft, so the user's typing survives.
           set({ profile: previous, isSaving: false, error: message })
+          // The section header shows the same message inline; the toast is for
+          // a save that failed after the user scrolled somewhere else.
+          pushToast(message, 'error')
           return message
         }
       },

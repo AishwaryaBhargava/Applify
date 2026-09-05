@@ -55,8 +55,12 @@ export default function ChatThread({
   )
 
   return (
+    /* The thread is the only scroll region on the page: the top bar above it
+       and the composer below it stay put, so a long conversation never pushes
+       the input off screen. Content is capped at 800px and centred, which is
+       what keeps a line of an answer readable at 1440px and 1920px. */
     <div ref={ref} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-6">
-      <div className="mx-auto flex max-w-3xl flex-col gap-4">
+      <div className="mx-auto flex max-w-[800px] flex-col gap-4">
         {header}
 
         {messages.map((message, index) => (

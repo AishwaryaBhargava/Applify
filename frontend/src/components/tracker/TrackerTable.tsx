@@ -21,15 +21,23 @@ const COLUMNS = [
   'Status',
 ]
 
-/** Placeholder rows while the first fetch is in flight. */
+/**
+ * Placeholder rows while the first fetch is in flight. The pulse is put on the
+ * row rather than each cell so a row breathes as one object, matching the
+ * profile and analysis skeletons.
+ */
 function SkeletonRows() {
   return (
     <>
       {[0, 1, 2, 3].map((row) => (
-        <tr key={row} className="border-b border-border last:border-0">
+        <tr
+          key={row}
+          aria-hidden="true"
+          className="animate-pulse border-b border-border last:border-0"
+        >
           {COLUMNS.map((column) => (
             <td key={column} className="px-4 py-3.5">
-              <div className="h-3 animate-pulse rounded-badge bg-surface-warm" />
+              <div className="h-3 rounded-badge bg-surface-warm" />
             </td>
           ))}
         </tr>

@@ -3,6 +3,7 @@ import { NavLink, useNavigate, useParams } from 'react-router-dom'
 import { Trash2 } from 'lucide-react'
 import ConfirmModal from '../common/ConfirmModal'
 import Spinner from '../common/Spinner'
+import NewChatButton from './NewChatButton'
 import { useChatListStore } from '../../store/chatListStore'
 import { useUiStore } from '../../store/uiStore'
 import type { JobChat } from '../../types'
@@ -46,14 +47,19 @@ export default function ChatList() {
       </div>
 
       {chats.length === 0 && !isLoading ? (
-        <div className="px-3 py-2">
-          <p className="text-[12px] font-medium text-text-secondary">
+        /* The same shape as the tracker's and the profile's empty states,
+           scaled to a 240px column: serif heading, one muted line, one coral
+           action. */
+        <div className="px-3 py-3">
+          <h2 className="font-serif text-[15px] font-medium text-teal-ink">
             No job chats yet
-          </p>
+          </h2>
           <p className="mt-1 text-[11px] leading-relaxed text-text-faint">
-            Start one with a job description and Applify will score your fit
-            against your profile.
+            Start one with a job description.
           </p>
+          <div className="mt-3">
+            <NewChatButton variant="compact" label="Add your first" />
+          </div>
         </div>
       ) : (
         <nav className="flex flex-col">

@@ -19,6 +19,7 @@ import {
   emptyWorkExperience,
 } from '../services/profile'
 import { useProfileStore } from '../store/profileStore'
+import { useUiStore } from '../store/uiStore'
 import type {
   Certification,
   Education,
@@ -453,6 +454,7 @@ export default function Profile() {
   const fetchProfile = useProfileStore((state) => state.fetchProfile)
   const fetchGaps = useProfileStore((state) => state.fetchGaps)
   const dismissGap = useProfileStore((state) => state.dismissGap)
+  const toggleSidebar = useUiStore((state) => state.toggleSidebar)
 
   useEffect(() => {
     void (async () => {
@@ -478,6 +480,7 @@ export default function Profile() {
       <TopBar
         title="Your profile"
         subtitle="Everything the AI knows about you"
+        onMenu={toggleSidebar}
         actions={
           <Link
             to="/onboarding"

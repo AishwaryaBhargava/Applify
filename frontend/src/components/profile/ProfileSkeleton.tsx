@@ -1,6 +1,10 @@
-/** Placeholder block that pulses in the surface tone while data loads. */
+/**
+ * Placeholder block, in the same warm surface tone and the same badge radius
+ * as the analysis and tracker skeletons — the three are seen minutes apart and
+ * should read as one loading treatment.
+ */
 function Bar({ className = '' }: { className?: string }) {
-  return <div className={`rounded bg-surface-warm ${className}`} />
+  return <div className={`rounded-badge bg-surface-warm ${className}`} />
 }
 
 /**
