@@ -16,15 +16,21 @@ class OutputType(str, Enum):
 
 
 class OutputRequest(BaseModel):
-    """Ask for a generated resume, cover letter, or application answer."""
+    """Ask for a generated resume, cover letter, or application answer.
+
+    ``user_context`` is whatever the user typed alongside the button: a steer
+    ("mention my team leadership"), a length ("keep it to one page"), or -- for
+    ``answer`` -- the application question itself. It is appended to the
+    synthetic user message the route stores, so the thread reads as though the
+    user had asked in chat.
+    """
 
     output_type: OutputType
-    # Required when output_type is ANSWER: the application question to answer.
-    question: str | None = None
-    instructions: str | None = Field(
-        default=None, description="Optional user steer, e.g. tone or length"
+    user_context: str | None = Field(
+        default=None,
+        max_length=8000,
+        description="Optional steer, or the question to answer",
     )
-    stream: bool = Field(default=True, description="Return an SSE stream when true")
 
 
 class OutputResponse(BaseModel):

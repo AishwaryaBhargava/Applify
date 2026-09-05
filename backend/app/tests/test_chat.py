@@ -582,17 +582,25 @@ def test_post_message_rejects_a_blank_message(
 def test_post_message_with_output_intent_delegates_to_output_service(
     auth_client: TestClient, db: FakeSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A resume request streams from output_service and is stored as a resume.
+    """A resume request streams from output_service, not the chat model.
 
-    This is the Phase 7 seam: everything except the generation itself is done.
+    The seam itself: Groq must not be touched, and the assistant message is
+    stored under the detected ``kind``. What the document says is
+    ``test_outputs.py``'s problem.
     """
     chat = db.seed(make_chat())
+    db.seed(make_tracker(chat.id))
     db.seed(make_profile())
 
     def explode(messages):  # pragma: no cover - asserts the chat model is unused
         raise AssertionError("chat model must not run for an output intent")
 
     monkeypatch.setattr(chat_service, "_open_chat_stream", explode)
+    monkeypatch.setattr(
+        output_service,
+        "_open_output_stream",
+        lambda output_type, prompt: iter([_Chunk("# Tailored "), _Chunk("Resume")]),
+    )
 
     response = auth_client.post(
         "/chats/{}/messages".format(chat.id),
@@ -600,13 +608,13 @@ def test_post_message_with_output_intent_delegates_to_output_service(
     )
 
     events = parse_sse(response.text)
-    assert [event["type"] for event in events] == ["start", "token", "done"]
+    assert [event["type"] for event in events] == ["start", "token", "token", "done"]
     assert events[0]["kind"] == "resume"
-    assert events[1]["content"] == output_service.PLACEHOLDER_TOKEN
+    assert events[-1]["content"] == "# Tailored Resume"
 
     assistant = [m for m in db.rows(ChatMessage) if m.role == "assistant"]
     assert assistant[0].kind == "resume"
-    assert assistant[0].content == output_service.PLACEHOLDER_TOKEN
+    assert assistant[0].content == "# Tailored Resume"
 
 
 def test_post_message_sends_profile_jd_and_analysis_to_the_model(

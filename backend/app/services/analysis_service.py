@@ -388,6 +388,28 @@ def chat_ids_with_analysis(
     return {row.chat_id for row in rows}
 
 
+def analyses_by_chat(
+    db: Session,
+    chat_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, Analysis]:
+    """Return the analyses for ``chat_ids``, keyed by chat.
+
+    One query for the whole tracker rather than one per row. Ordered oldest
+    first so that when a chat has been re-analysed the later row overwrites the
+    earlier one in the dict -- the same "newest wins" rule :func:`get_analysis`
+    applies.
+    """
+    if not chat_ids:
+        return {}
+    rows = (
+        db.query(Analysis)
+        .filter(Analysis.chat_id.in_(chat_ids))
+        .order_by(Analysis.created_at.asc())
+        .all()
+    )
+    return {row.chat_id: row for row in rows}
+
+
 def save_analysis(
     db: Session,
     chat: JobChat,

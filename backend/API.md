@@ -291,7 +291,7 @@ data: {"type":"done","message_id":"7c9e...","content":"Your Python experience fi
 |---|---|---|
 | `start` | `message_id`, `kind` | The assistant message's id, chosen up front, and the detected intent. Render an empty bubble and stream into it. |
 | `token` | `content` | One chunk. Append it; chunks are not line- or word-aligned. |
-| `done` | `message_id`, `content` | The full text. The message is persisted at this point. The stream closes. |
+| `done` | `message_id`, `content`, (`output_id`, `resume_type`) | The full text. The message is persisted at this point. For an output `kind` the event also carries `output_id`, and for `resume` the tracker's new `resume_type`. The stream closes. |
 | `error` | `message`, `message_id`, `partial`, `content` | Generation failed. `partial: true` means `content` did stream and **has been persisted** under `message_id` -- leave it on screen and offer a retry. `partial: false` means nothing was stored. |
 
 The user message is persisted before the stream opens, so it survives a failure.
@@ -320,10 +320,9 @@ letter"* is a cover-letter request. If the classifier call fails, the message is
 treated as `chat`: answering conversationally when a document was wanted is a
 cheaper mistake than generating a document nobody asked for.
 
-When the intent is not `chat`, generation is delegated to `output_service`.
-Until Phase 7 lands, that stub streams a single token,
-`"Output generation coming in Phase 7."`, and the message is persisted with the
-detected `kind`.
+When the intent is not `chat`, generation is delegated to `output_service` and
+the stream is an Azure GPT-4o document rather than a Groq chat reply. See
+[Outputs](#outputs) for what the `done` event carries and what is persisted.
 
 #### Model context
 
@@ -346,25 +345,193 @@ un-droppable; the newest turn -- the one being answered -- is never dropped.
 
 ---
 
-## Outputs (Phase 7)
+## Outputs
 
-| Method | Path | Status |
+Resume, cover letter, and application answers. All three come from Azure GPT-4o
+(`AZURE_GPT4O_DEPLOYMENT`, streaming, `temperature` 0.4, `max_tokens` 3000), and
+the initial call is wrapped in exponential backoff on 429 / 5xx.
+
+There are two ways to ask for the same document:
+
+* **by asking in chat** -- `POST /chats/{id}/messages` detects the intent and
+  streams the document under the matching `kind`;
+* **by pressing a button** -- `POST /chats/{id}/outputs` names the type outright.
+
+They share one code path, so the SSE wire format is identical. The only
+difference is that the button path writes the user turn it stands for, so the
+thread reads the same either way.
+
+### `POST /chats/{chat_id}/outputs`
+
+Request:
+
+```json
+{ "output_type": "cover_letter", "user_context": "mention my team leadership" }
+```
+
+| Field | Notes |
+|---|---|
+| `output_type` | `"resume"`, `"cover_letter"`, or `"answer"`. Anything else is `422` |
+| `user_context` | Optional, 8000 chars. A steer (*"keep it to one page"*), or -- for `answer` -- the application question itself |
+
+Before the stream opens, the route stores a user message standing for the
+button:
+
+| `output_type` | Stored user message |
+|---|---|
+| `resume` | `Generate a tailored resume for this role` |
+| `cover_letter` | `Write a cover letter for this role` |
+| `answer` | `Answer this application question` |
+
+`user_context`, when given, is appended after a colon -- so an `answer` request
+is stored as `Answer this application question: <question>`, exactly the shape a
+user typing it by hand would produce.
+
+Response `200`: the **same SSE stream** as `POST /chats/{id}/messages`, with
+`kind` fixed to the requested `output_type`:
+
+```
+data: {"type":"start","message_id":"7c9e...","kind":"resume"}
+
+data: {"type":"token","content":"# Priya "}
+
+data: {"type":"done","message_id":"7c9e...","content":"# Priya Raman\n...","output_id":"1a2b...","resume_type":"tailored"}
+
+```
+
+| Status | Cause |
+|---|---|
+| 404 | The chat is not the caller's live chat (nothing is written) |
+| 422 | `output_type` is missing or not one of the three |
+
+#### What `done` carries for an output
+
+| Field | Always | Meaning |
 |---|---|---|
-| `POST` | `/chats/{chat_id}/outputs` | `501` until Phase 7 |
-| `GET` | `/chats/{chat_id}/outputs` | `501` until Phase 7 |
+| `message_id` | yes | The assistant message, as announced on `start` |
+| `content` | yes | The full document, markdown |
+| `output_id` | output kinds only | The new `generated_outputs` row, so the client can link to it without refetching |
+| `resume_type` | `resume` only | The tracker's new value, `"tailored"`. Apply it to the tracker store directly -- no `GET /tracker` needed |
 
-Resume, cover letter, and answer generation is reachable today through
-`POST /chats/{id}/messages` -- the intent router streams it under the matching
-`kind` and Phase 7 replaces the stub behind that seam.
+#### What is persisted
+
+On `done`, one commit writes all of:
+
+1. the assistant `chat_messages` row, under the streamed `message_id` and the
+   output `kind`;
+2. a `generated_outputs` row (`chat_id`, `output_type`, `content`);
+3. for a resume, `tracker_entries.resume_type = "tailored"` for that chat.
+
+A stream that fails part-way persists **only** the assistant message, with
+`partial: true` on the `error` event. Half a resume is worth leaving on screen;
+it is not filed in the user's outputs as a finished document, and it does not
+flip the tracker.
+
+#### Prompts
+
+Every output type shares one grounding rule, stated in its system prompt: ground
+each statement in the profile, never invent or embellish employers, titles,
+dates, degrees, certifications, tools, or numbers, and output markdown only --
+no preamble.
+
+| Type | What the prompt asks for |
+|---|---|
+| `resume` | A full tailored resume: name and contact, then Summary, Experience, Skills, Education, Projects, Certifications as H2s, **omitting any section the profile has no content for**. Highlights are reordered and rephrased in the JD's own vocabulary while staying factually identical -- same scope, same numbers, same technologies |
+| `cover_letter` | Three or four paragraphs addressed to the company and role named in the JD, tying two or three specific profile items to what the job asks for. The analysis's strengths, when one exists, decide which experiences lead. `user_context` is woven in as far as the profile supports it. Under 400 words unless the user asks otherwise |
+| `answer` | The application question, answered in the first person from the profile. The question is extracted from the request -- everything after a marker such as *"answer this question:"*, or the whole message when there is no marker -- and stated on its own line in the prompt. 120-250 words unless the user asks for a length |
+
+The model context is assembled by `output_service.build_output_prompt`: the
+profile as **raw JSON** (not the chat summary -- a resume that drops a role
+because the summary capped the list is a defect the user can see), the full JD,
+the analysis summary when one exists, then the windowed conversation and the
+triggering request. The budget is 6000 words; only history is ever trimmed.
+
+### `GET /chats/{chat_id}/outputs`
+
+`200 OutputResponse[]`, ordered `created_at` **descending**:
+
+```json
+{
+  "id": "1a2b...",
+  "chat_id": "3f1c...",
+  "output_type": "resume",
+  "content": "# Priya Raman\n\n## Summary\n...",
+  "created_at": "2026-09-04T18:31:02.114Z"
+}
+```
+
+`404` when the chat is not the caller's. A chat with no documents yet is `200
+[]`, not a 404.
 
 ---
 
-## Tracker (Phase 8)
+## Tracker
 
-| Method | Path | Status |
+One tracker row per job chat, created automatically with the chat. The user
+never adds one by hand, and the only field they edit is `status`.
+
+A row is a view over three tables: `tracker_entries` holds `status` and
+`resume_type`, the chat supplies the title, company, date and analysis type, and
+the analysis supplies the fit score. Rows whose chat has been soft-deleted are
+excluded -- the listing is driven by the user's live chats, so
+`DELETE /chats/{id}` removes the application from the tracker without the
+tracker knowing anything about `deleted_at`.
+
+### `GET /tracker`
+
+`200 TrackerEntry[]`, ordered `created_at` **descending**:
+
+```json
+{
+  "id": "9d0e...",
+  "chat_id": "3f1c...",
+  "user_id": "5b7a...",
+  "job_title": "Senior Backend Engineer",
+  "title": "Senior Backend Engineer",
+  "company": "Kestrel Payments",
+  "date_added": "2026-09-01T12:00:00Z",
+  "analysis_type": "detailed",
+  "resume_type": "unaltered",
+  "status": "not_applied",
+  "fit_score": 74,
+  "created_at": "2026-09-01T12:00:00Z",
+  "updated_at": "2026-09-04T18:31:02.114Z"
+}
+```
+
+| Field | Source | Notes |
 |---|---|---|
-| `GET` | `/tracker` | `501` until Phase 8 |
-| `PATCH` | `/tracker/{chat_id}` | `501` until Phase 8 |
+| `id` | `tracker_entries` | The tracker row, not the chat |
+| `chat_id` | `tracker_entries` | What the job title links to, and what `PATCH` is addressed by |
+| `job_title` / `title` | chat | The same value under both names; `title` is the Phase 6 spelling the sidebar's optimistic entry uses |
+| `company` | chat | Nullable |
+| `date_added` | `job_chats.created_at` | When the user started this application |
+| `analysis_type` | chat | `"quick"`, `"detailed"`, or `null` before an analysis |
+| `resume_type` | `tracker_entries` | `"unaltered"`, or `"tailored"` once a resume was generated in the chat. Rendered as *Unaltered* / *AI-Tailored* |
+| `status` | `tracker_entries` | `not_applied` \| `applied` \| `interviewing` \| `offer` \| `rejected` |
+| `fit_score` | analysis | `0`-`100`, or `null` when the chat has no analysis |
+| `created_at` / `updated_at` | `tracker_entries` | `updated_at` moves on every status change |
 
-Tracker rows already exist: one is created with every chat, and its
-`resume_type` is surfaced on `ChatResponse`.
+Empty list when the user has no live chats -- that is what drives the empty
+state, not a 404.
+
+### `PATCH /tracker/{chat_id}`
+
+Addressed by **chat id**, because that is what the user is looking at and what
+ownership is checked against.
+
+```json
+{ "status": "interviewing" }
+```
+
+`status` is the only field, and it is required. `resume_type` follows from
+whether a resume was generated and is not settable by the client; every other
+column is copied from the chat.
+
+`200` returns the **full updated row**, in the shape above, so the tracker store
+can replace the entry without a refetch.
+
+| Status | Cause |
+|---|---|
+| 404 | The chat is not the caller's live chat, or has no tracker row |
+| 422 | `status` is missing, or outside the five allowed values |
