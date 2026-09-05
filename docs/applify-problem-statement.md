@@ -51,7 +51,7 @@ The target user is anyone actively job hunting, from fresh graduates to senior p
 - User can upload a resume (PDF or DOCX) and the system parses and stores the content
 - Parsed profile is organized into: work experience, education, skills, certifications, projects, achievements
 - User can manually add, edit, or enrich any field in their profile after parsing
-- AI nudges the user when a profile section is missing or thin, but backs off if the user dismisses the suggestion
+- Applify nudges the user when a profile section is missing or thin, but backs off if the user dismisses the suggestion
 - Profile persists across all sessions
 
 **Job Chats**

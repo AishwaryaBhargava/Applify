@@ -44,10 +44,13 @@ Applify is a dedicated AI workspace for job applications. Each chat is one job o
 ### Prerequisites
 
 - Node.js v18+
-- Python 3.11+
-- A Supabase project
+- Python 3.11 (3.10 works, but 3.11 is what Render runs)
+- Docker Desktop, for the local Supabase stack
 - A Groq API key
 - An Azure AI Foundry resource with GPT-4o deployed
+
+A cloud Supabase project is only needed for deployment — local development runs
+the whole Supabase stack in Docker via the CLI (see Supabase Setup below).
 
 ### 1. Clone the repo
 

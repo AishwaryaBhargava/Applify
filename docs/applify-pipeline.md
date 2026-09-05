@@ -37,27 +37,27 @@ Prepare the development environment, acquire all necessary credentials, and conf
 ### What we do:
 
 **Accounts and Credentials:**
-- [ ] Create Azure account at portal.azure.com if not already present
-- [ ] Create an Azure AI Foundry resource and note the endpoint URL
-- [ ] Deploy GPT-4o model in Azure AI Foundry and note the deployment name
-- [ ] Generate and securely store the Azure API key
-- [ ] Create Groq account at console.groq.com and generate an API key
-- [ ] Create Supabase project at supabase.com and note the database URL, anon key, and JWT secret
+- [x] Create Azure account at portal.azure.com if not already present
+- [x] Create an Azure AI Foundry resource and note the endpoint URL
+- [x] Deploy GPT-4o model in Azure AI Foundry and note the deployment name
+- [x] Generate and securely store the Azure API key
+- [x] Create Groq account at console.groq.com and generate an API key
+- [x] Create Supabase project at supabase.com and note the database URL, anon key, and JWT secret
 - [ ] Create Vercel account (frontend deploy)
 - [ ] Create Render account (backend deploy)
 
 **Local Environment:**
-- [ ] Verify Node.js v18+ is installed
-- [ ] Verify Python 3.11+ and pip are installed
-- [ ] Verify git is configured with correct user details
+- [x] Verify Node.js v18+ is installed
+- [x] Verify Python 3.11+ and pip are installed
+- [x] Verify git is configured with correct user details
 
 **Verification:**
-- [ ] Run a standalone Python script that calls Groq with a test message and prints the response
-- [ ] Run a standalone Python script that calls Azure GPT-4o with a test message and prints the response
-- [ ] Connect to Supabase from a local Python script and confirm the connection is successful
+- [x] Run a standalone Python script that calls Groq with a test message and prints the response
+- [x] Run a standalone Python script that calls Azure GPT-4o with a test message and prints the response
+- [x] Connect to Supabase from a local Python script and confirm the connection is successful
 
 **Documentation:**
-- [ ] Finalize and store all 5 project documents (Problem Statement, Tech Stack, Folder Structure, Pipeline, README)
+- [x] Finalize and store all 5 project documents (Problem Statement, Tech Stack, Folder Structure, Pipeline, README)
 
 ### Acceptance Criteria:
 - Azure AI Foundry resource is active with GPT-4o deployment confirmed
@@ -100,37 +100,37 @@ Stand up a working frontend and backend skeleton with the full folder structure 
 ### What we do:
 
 **Project Structure:**
-- [ ] Create root folder `applify/` with `backend/` and `frontend/` subdirectories
-- [ ] Initialize git repository at root level
-- [ ] Create `.gitignore` at root, backend, and frontend levels
-- [ ] Create `.env` and `.env.example` at all levels with placeholder values
+- [x] Create root folder `applify/` with `backend/` and `frontend/` subdirectories
+- [x] Initialize git repository at root level
+- [x] Create `.gitignore` at root, backend, and frontend levels
+- [x] Create `.env` and `.env.example` at all levels with placeholder values
 
 **Backend:**
-- [ ] Create Python virtual environment inside `backend/`
-- [ ] Install dependencies: fastapi, uvicorn, openai, groq, python-multipart, pydantic, pydantic-settings, python-dotenv, sqlalchemy, psycopg2-binary, alembic, pdfplumber, python-docx
-- [ ] Generate `requirements.txt`
-- [ ] Implement `core/config.py` with Settings class loading all env vars
-- [ ] Implement `main.py` with FastAPI app, CORS middleware, and router registration
-- [ ] Implement `GET /health` route returning `{ "status": "ok" }`
-- [ ] Create all route, schema, service, model, and utility files as empty skeletons
-- [ ] Verify backend runs locally on http://localhost:8000
+- [x] Create Python virtual environment inside `backend/`
+- [x] Install dependencies: fastapi, uvicorn, openai, groq, python-multipart, pydantic, pydantic-settings, python-dotenv, sqlalchemy, psycopg2-binary, alembic, pdfplumber, python-docx
+- [x] Generate `requirements.txt`
+- [x] Implement `core/config.py` with Settings class loading all env vars
+- [x] Implement `main.py` with FastAPI app, CORS middleware, and router registration
+- [x] Implement `GET /health` route returning `{ "status": "ok" }`
+- [x] Create all route, schema, service, model, and utility files as empty skeletons
+- [x] Verify backend runs locally on http://localhost:8000
 
 **Frontend:**
-- [ ] Initialize React + Vite + TypeScript project inside `frontend/`
-- [ ] Install and configure Tailwind CSS
-- [ ] Install dependencies: zustand, axios, lucide-react, react-markdown, react-router-dom, @supabase/supabase-js
-- [ ] Create `lib/supabase.ts` with Supabase client instance
-- [ ] Create all Zustand store skeleton files with initial state and no logic
-- [ ] Create placeholder component and page files as empty shells with no logic
-- [ ] Create `services/api.ts` with Axios instance using `VITE_API_URL`
-- [ ] Create `types/index.ts` with all shared interfaces: Profile, WorkExperience, JobChat, ChatMessage, Analysis, TrackerEntry, GeneratedOutput
-- [ ] Set up React Router in `App.tsx` with routes for all pages: Login, Signup, Onboarding, Chat, Profile, Tracker
-- [ ] Build static layout shell: sidebar + main area (no logic, structure only)
-- [ ] Verify frontend runs locally on http://localhost:5173
+- [x] Initialize React + Vite + TypeScript project inside `frontend/`
+- [x] Install and configure Tailwind CSS
+- [x] Install dependencies: zustand, axios, lucide-react, react-markdown, react-router-dom, @supabase/supabase-js
+- [x] Create `lib/supabase.ts` with Supabase client instance
+- [x] Create all Zustand store skeleton files with initial state and no logic
+- [x] Create placeholder component and page files as empty shells with no logic
+- [x] Create `services/api.ts` with Axios instance using `VITE_API_URL`
+- [x] Create `types/index.ts` with all shared interfaces: Profile, WorkExperience, JobChat, ChatMessage, Analysis, TrackerEntry, GeneratedOutput
+- [x] Set up React Router in `App.tsx` with routes for all pages: Login, Signup, Onboarding, Chat, Profile, Tracker
+- [x] Build static layout shell: sidebar + main area (no logic, structure only)
+- [x] Verify frontend runs locally on http://localhost:5173
 
 **Integration:**
-- [ ] Frontend calls `GET /health` and renders the response on screen
-- [ ] Confirm no CORS errors in browser console
+- [x] Frontend calls `GET /health` and renders the response on screen
+- [x] Confirm no CORS errors in browser console
 
 ### Acceptance Criteria:
 - Backend runs on localhost:8000 and `GET /health` returns `{ "status": "ok" }`
@@ -173,30 +173,30 @@ Define the full database schema using SQLAlchemy models, wire the database conne
 ### What we do:
 
 **Supabase:**
-- [ ] Copy the database connection string (Session mode, port 5432) from Project Settings and add to backend `.env` as `SUPABASE_DATABASE_URL`
-- [ ] Copy the JWT secret from Project Settings and add as `SUPABASE_JWT_SECRET`
-- [ ] Confirm the connection string works from a local Python script
+- [x] Copy the database connection string (Session mode, port 5432) from Project Settings and add to backend `.env` as `SUPABASE_DATABASE_URL`
+- [x] Copy the JWT secret from Project Settings and add as `SUPABASE_JWT_SECRET`
+- [x] Confirm the connection string works from a local Python script
 
 **Backend: Database connection:**
-- [ ] Add `SUPABASE_DATABASE_URL` and `SUPABASE_JWT_SECRET` to `core/config.py`
-- [ ] Implement `data/database.py` with SQLAlchemy engine, SessionLocal, and Base
-- [ ] Implement `data/deps.py` with `get_db` dependency and `get_current_user` dependency that decodes the Supabase JWT and returns the user id
+- [x] Add `SUPABASE_DATABASE_URL` and `SUPABASE_JWT_SECRET` to `core/config.py`
+- [x] Implement `data/database.py` with SQLAlchemy engine, SessionLocal, and Base
+- [x] Implement `data/deps.py` with `get_db` dependency and `get_current_user` dependency that decodes the Supabase JWT and returns the user id
 
 **Backend: Models:**
-- [ ] Implement `models/profile.py` — user_id, raw_text, parsed_json, created_at, updated_at
-- [ ] Implement `models/job_chat.py` — id, user_id, title, company, jd_text, analysis_type, created_at
-- [ ] Implement `models/chat_message.py` — id, chat_id, role, content, created_at
-- [ ] Implement `models/analysis.py` — id, chat_id, type, fit_score, strengths, gaps, verdict, full_json, created_at
-- [ ] Implement `models/tracker_entry.py` — id, chat_id, user_id, status, resume_type, created_at, updated_at
-- [ ] Implement `models/generated_output.py` — id, chat_id, output_type, content, created_at
-- [ ] Import all models in `models/__init__.py`
+- [x] Implement `models/profile.py` — user_id, raw_text, parsed_json, created_at, updated_at
+- [x] Implement `models/job_chat.py` — id, user_id, title, company, jd_text, analysis_type, created_at
+- [x] Implement `models/chat_message.py` — id, chat_id, role, content, created_at
+- [x] Implement `models/analysis.py` — id, chat_id, type, fit_score, strengths, gaps, verdict, full_json, created_at
+- [x] Implement `models/tracker_entry.py` — id, chat_id, user_id, status, resume_type, created_at, updated_at
+- [x] Implement `models/generated_output.py` — id, chat_id, output_type, content, created_at
+- [x] Import all models in `models/__init__.py`
 
 **Alembic:**
-- [ ] Initialize Alembic inside `backend/`
-- [ ] Configure `alembic.ini` and `alembic/env.py` to use `SUPABASE_DATABASE_URL` and import all models
-- [ ] Generate initial migration: `alembic revision --autogenerate -m "initial schema"`
-- [ ] Run migration: `alembic upgrade head`
-- [ ] Confirm all 6 tables are created in Supabase dashboard
+- [x] Initialize Alembic inside `backend/`
+- [x] Configure `alembic.ini` and `alembic/env.py` to use `SUPABASE_DATABASE_URL` and import all models
+- [x] Generate initial migration: `alembic revision --autogenerate -m "initial schema"`
+- [x] Run migration: `alembic upgrade head`
+- [x] Confirm all 6 tables are created in Supabase dashboard
 
 ### Acceptance Criteria:
 - All 6 SQLAlchemy models are implemented and importable with no errors
@@ -237,24 +237,24 @@ Implement email and Google authentication via Supabase Auth, protect all backend
 ### What we do:
 
 **Backend: Auth middleware:**
-- [ ] Implement `utils/auth.py` with `decode_jwt(token)` helper using `SUPABASE_JWT_SECRET`
-- [ ] Implement `get_current_user` dependency fully in `data/deps.py` — reads Authorization header, decodes token, returns user_id, raises 401 on invalid or missing token
-- [ ] Apply `get_current_user` as a dependency to all routes except `GET /health`
-- [ ] Confirm all protected routes return 401 with no token and 200 with a valid token
+- [x] Implement `utils/auth.py` with `decode_jwt(token)` helper using `SUPABASE_JWT_SECRET`
+- [x] Implement `get_current_user` dependency fully in `data/deps.py` — reads Authorization header, decodes token, returns user_id, raises 401 on invalid or missing token
+- [x] Apply `get_current_user` as a dependency to all routes except `GET /health`
+- [x] Confirm all protected routes return 401 with no token and 200 with a valid token
 
 **Frontend: Auth pages:**
-- [ ] Implement `Login.tsx` with email + password form and Google OAuth button
-- [ ] Implement `Signup.tsx` with email + password form and Google OAuth button
-- [ ] Implement `authStore.ts` — holds Supabase session and user object, handles login, logout, and session restore on app load
-- [ ] Implement `useAuth.ts` hook with isAuthenticated, isLoading, and redirect helpers
-- [ ] Add auth guard to `App.tsx` — unauthenticated users are redirected to Login on any protected route
-- [ ] After successful login, check if profile exists in the database. If not, redirect to Onboarding. If yes, redirect to Chat.
-- [ ] Implement logout — clears Supabase session and auth store, redirects to Login
+- [x] Implement `Login.tsx` with email + password form and Google OAuth button
+- [x] Implement `Signup.tsx` with email + password form and Google OAuth button
+- [x] Implement `authStore.ts` — holds Supabase session and user object, handles login, logout, and session restore on app load
+- [x] Implement `useAuth.ts` hook with isAuthenticated, isLoading, and redirect helpers
+- [x] Add auth guard to `App.tsx` — unauthenticated users are redirected to Login on any protected route
+- [x] After successful login, check if profile exists in the database. If not, redirect to Onboarding. If yes, redirect to Chat.
+- [x] Implement logout — clears Supabase session and auth store, redirects to Login
 
 **Supabase Auth configuration:**
-- [ ] Enable Email + Password provider in Supabase Auth dashboard
+- [x] Enable Email + Password provider in Supabase Auth dashboard
 - [ ] Enable Google OAuth provider in Supabase Auth dashboard (requires Google Cloud OAuth client)
-- [ ] Set redirect URLs for local and production environments
+- [x] Set redirect URLs for local and production environments
 
 ### Acceptance Criteria:
 - User can sign up with email and password and is redirected correctly
@@ -300,28 +300,28 @@ Build the onboarding flow where new users upload their resume, the system parses
 ### What we do:
 
 **Backend: Resume parser:**
-- [ ] Implement `services/resume_parser.py` with `parse_resume(file_bytes, file_type)` function
-- [ ] PDF path: use `pdfplumber` to extract raw text from all pages
-- [ ] DOCX path: use `python-docx` to extract paragraphs and table text
-- [ ] Post-extraction: pass raw text to Groq with a structured extraction prompt that returns JSON with sections: work_experience, education, skills, certifications, projects, achievements
-- [ ] Save both `raw_text` (full extracted string) and `parsed_json` (structured dict) to the profile table
+- [x] Implement `services/resume_parser.py` with `parse_resume(file_bytes, file_type)` function
+- [x] PDF path: use `pdfplumber` to extract raw text from all pages
+- [x] DOCX path: use `python-docx` to extract paragraphs and table text
+- [x] Post-extraction: pass raw text to Groq with a structured extraction prompt that returns JSON with sections: work_experience, education, skills, certifications, projects, achievements
+- [x] Save both `raw_text` (full extracted string) and `parsed_json` (structured dict) to the profile table
 
 **Backend: Profile upload route:**
-- [ ] Implement `POST /profile/upload` — accepts multipart file upload (PDF or DOCX only), calls `resume_parser.py`, saves result to profile table, returns the parsed profile JSON
-- [ ] Implement `GET /profile` — returns the current user's full profile JSON
-- [ ] Reject non-PDF and non-DOCX files with a clear 400 error
+- [x] Implement `POST /profile/upload` — accepts multipart file upload (PDF or DOCX only), calls `resume_parser.py`, saves result to profile table, returns the parsed profile JSON
+- [x] Implement `GET /profile` — returns the current user's full profile JSON
+- [x] Reject non-PDF and non-DOCX files with a clear 400 error
 
 **Frontend: Onboarding page:**
-- [ ] Implement `Onboarding.tsx` — a focused single-purpose page for first-time users
-- [ ] Implement `ResumeUpload.tsx` component with drag-and-drop area and file picker (PDF and DOCX only, max 10MB)
-- [ ] On file selection, show file name and a confirm upload button
-- [ ] On upload, call `POST /profile/upload` and show parsing progress: Uploading → Parsing → Saving
-- [ ] On success, redirect to Profile page so user can review parsed data
-- [ ] Implement a skip option — redirects to Chat with a persistent profile nudge banner
+- [x] Implement `Onboarding.tsx` — a focused single-purpose page for first-time users
+- [x] Implement `ResumeUpload.tsx` component with drag-and-drop area and file picker (PDF and DOCX only, max 10MB)
+- [x] On file selection, show file name and a confirm upload button
+- [x] On upload, call `POST /profile/upload` and show parsing progress: Uploading → Parsing → Saving
+- [x] On success, redirect to Profile page so user can review parsed data
+- [x] Implement a skip option — redirects to Chat with a persistent profile nudge banner
 
 **Frontend: Onboarding routing:**
-- [ ] After login, check `GET /profile`. If profile exists, redirect to Chat. If not, redirect to Onboarding.
-- [ ] If user skips onboarding, mark skip in authStore so the nudge banner shows on Chat
+- [x] After login, check `GET /profile`. If profile exists, redirect to Chat. If not, redirect to Onboarding.
+- [x] If user skips onboarding, mark skip in authStore so the nudge banner shows on Chat
 
 ### Acceptance Criteria:
 - New user after signup lands on Onboarding
@@ -367,22 +367,22 @@ Build the full profile page where users can review, edit, and manually enrich th
 ### What we do:
 
 **Backend: Profile routes:**
-- [ ] Implement `PATCH /profile` — accepts partial profile update as JSON, merges with existing parsed_json, saves to database, returns updated profile
-- [ ] Implement `GET /profile/gaps` — analyzes the current profile JSON and returns a list of thin or missing sections with a suggested nudge message for each
-- [ ] Implement `profile_service.py` with `detect_gaps(profile_json)` — checks each section for completeness and returns structured gap suggestions
+- [x] Implement `PATCH /profile` — accepts partial profile update as JSON, merges with existing parsed_json, saves to database, returns updated profile
+- [x] Implement `GET /profile/gaps` — analyzes the current profile JSON and returns a list of thin or missing sections with a suggested nudge message for each
+- [x] Implement `profile_service.py` with `detect_gaps(profile_json)` — checks each section for completeness and returns structured gap suggestions
 
 **Frontend: Profile page:**
-- [ ] Implement `Profile.tsx` — renders all profile sections: Experience, Education, Skills, Certifications, Projects, Achievements
-- [ ] Implement `ProfileSection.tsx` — reusable collapsible section card with an edit toggle button
-- [ ] Implement `ProfileField.tsx` — inline editable text field that saves on blur via `PATCH /profile`
-- [ ] Implement `ProfileGapNudge.tsx` — soft suggestion banner for thin sections with a dismiss button
-- [ ] On page load, fetch profile from `GET /profile` and gap suggestions from `GET /profile/gaps`
-- [ ] Render gap nudge banners for missing or thin sections
-- [ ] Dismissed nudge IDs are stored in localStorage — dismissed nudges do not reappear on reload
-- [ ] If user dismisses all nudges, no further nudging happens until profile is next updated
+- [x] Implement `Profile.tsx` — renders all profile sections: Experience, Education, Skills, Certifications, Projects, Achievements
+- [x] Implement `ProfileSection.tsx` — reusable collapsible section card with an edit toggle button
+- [x] Implement `ProfileField.tsx` — inline editable text field that saves on blur via `PATCH /profile`
+- [x] Implement `ProfileGapNudge.tsx` — soft suggestion banner for thin sections with a dismiss button
+- [x] On page load, fetch profile from `GET /profile` and gap suggestions from `GET /profile/gaps`
+- [x] Render gap nudge banners for missing or thin sections
+- [x] Dismissed nudge IDs are stored in localStorage — dismissed nudges do not reappear on reload
+- [x] If user dismisses all nudges, no further nudging happens until profile is next updated
 
 **Frontend: Profile store:**
-- [ ] Implement `profileStore.ts` fully — profile data, loading state, update action that calls `PATCH /profile` and updates local state
+- [x] Implement `profileStore.ts` fully — profile data, loading state, update action that calls `PATCH /profile` and updates local state
 
 ### Acceptance Criteria:
 - All parsed profile sections render correctly in the profile page
@@ -425,42 +425,42 @@ Build the core product loop: create a job chat, paste a JD, choose analysis type
 ### What we do:
 
 **Backend: Chat routes:**
-- [ ] Implement `POST /chats` — creates a new chat with title, company, and JD text. Auto-creates a corresponding tracker entry.
-- [ ] Implement `GET /chats` — returns all chats for the current user ordered by created_at descending
-- [ ] Implement `GET /chats/{id}` — returns a single chat with its messages and analysis
-- [ ] Implement `DELETE /chats/{id}` — soft deletes a chat
-- [ ] Implement `POST /chats/{id}/analyze` — accepts analysis type (quick or detailed), runs analysis, saves result, returns structured JSON
-- [ ] Implement `POST /chats/{id}/messages` — accepts a user message, calls chat service, streams response via SSE
-- [ ] Implement `GET /chats/{id}/messages` — returns full message history for a chat
+- [x] Implement `POST /chats` — creates a new chat with title, company, and JD text. Auto-creates a corresponding tracker entry.
+- [x] Implement `GET /chats` — returns all chats for the current user ordered by created_at descending
+- [x] Implement `GET /chats/{id}` — returns a single chat with its messages and analysis
+- [x] Implement `DELETE /chats/{id}` — soft deletes a chat
+- [x] Implement `POST /chats/{id}/analyze` — accepts analysis type (quick or detailed), runs analysis, saves result, returns structured JSON
+- [x] Implement `POST /chats/{id}/messages` — accepts a user message, calls chat service, streams response via SSE
+- [x] Implement `GET /chats/{id}/messages` — returns full message history for a chat
 
 **Backend: Analysis service:**
-- [ ] Implement `analysis_service.py` with `run_quick_analysis(profile, jd_text)` using Groq
-- [ ] Quick snapshot output: fit_score (0-100), strengths (list of 3), gaps (list of 3), verdict (one sentence)
-- [ ] Implement `analysis_service.py` with `run_detailed_analysis(profile, jd_text)` using Azure GPT-4o
-- [ ] Detailed breakdown output: skill-by-skill comparison, gap reasoning per skill with suggestions, overall fit score with narrative
-- [ ] Both analysis types return structured JSON saved to the analysis table
-- [ ] Analysis is loaded from the database on subsequent visits — never re-run automatically
+- [x] Implement `analysis_service.py` with `run_quick_analysis(profile, jd_text)` using Groq
+- [x] Quick snapshot output: fit_score (0-100), strengths (list of 3), gaps (list of 3), verdict (one sentence)
+- [x] Implement `analysis_service.py` with `run_detailed_analysis(profile, jd_text)` using Azure GPT-4o
+- [x] Detailed breakdown output: skill-by-skill comparison, gap reasoning per skill with suggestions, overall fit score with narrative
+- [x] Both analysis types return structured JSON saved to the analysis table
+- [x] Analysis is loaded from the database on subsequent visits — never re-run automatically
 
 **Backend: Chat service:**
-- [ ] Implement `chat_service.py` — builds AI context from profile + JD + chat history via `context_builder.py`, calls Groq, streams response via SSE
-- [ ] After analysis is complete, the first AI message proactively suggests a next step (e.g. "Want me to tailor your resume for this role?")
-- [ ] If user ignores or redirects, the AI backs off and waits for the user to drive
-- [ ] Implement intent detection in `chat_service.py` — if the user message is requesting a resume, cover letter, or answer, route to `output_service.py` instead of chat
+- [x] Implement `chat_service.py` — builds AI context from profile + JD + chat history via `context_builder.py`, calls Groq, streams response via SSE
+- [x] After analysis is complete, the first AI message proactively suggests a next step (e.g. "Want me to tailor your resume for this role?")
+- [x] If user ignores or redirects, the AI backs off and waits for the user to drive
+- [x] Implement intent detection in `chat_service.py` — if the user message is requesting a resume, cover letter, or answer, route to `output_service.py` instead of chat
 
 **Backend: Context builder:**
-- [ ] Implement `utils/context_builder.py` — assembles profile summary + JD text + last N messages into a single context string
-- [ ] Apply sliding window: if context exceeds 4000 words, truncate oldest messages first, always keeping profile and JD in context
+- [x] Implement `utils/context_builder.py` — assembles profile summary + JD text + last N messages into a single context string
+- [x] Apply sliding window: if context exceeds 4000 words, truncate oldest messages first, always keeping profile and JD in context
 
 **Frontend: Chat page:**
-- [ ] Implement `Chat.tsx` — full chat page with sidebar chat list, new chat creation, and message thread
-- [ ] Implement `NewChatButton.tsx` — opens a modal to enter job title, company, and paste JD text
-- [ ] Implement `AnalysisTypeSelector.tsx` — renders after JD is submitted, before analysis runs. Quick Snapshot vs Detailed Breakdown.
-- [ ] Implement `ChatThread.tsx` — scrollable message thread with auto-scroll to latest message
-- [ ] Implement `ChatMessage.tsx` — user and assistant message bubbles with markdown rendering
-- [ ] Implement `ChatInput.tsx` — text input with send button, disabled during streaming
-- [ ] Implement `useStream.ts` hook — connects to SSE endpoint, appends streaming tokens to chatStore in real time
-- [ ] Implement `chatListStore.ts` — fetches and holds all chats for sidebar rendering
-- [ ] On new chat creation, add entry to chatListStore and trackerStore immediately
+- [x] Implement `Chat.tsx` — full chat page with sidebar chat list, new chat creation, and message thread
+- [x] Implement `NewChatButton.tsx` — opens a modal to enter job title, company, and paste JD text
+- [x] Implement `AnalysisTypeSelector.tsx` — renders after JD is submitted, before analysis runs. Quick Snapshot vs Detailed Breakdown.
+- [x] Implement `ChatThread.tsx` — scrollable message thread with auto-scroll to latest message
+- [x] Implement `ChatMessage.tsx` — user and assistant message bubbles with markdown rendering
+- [x] Implement `ChatInput.tsx` — text input with send button, disabled during streaming
+- [x] Implement `useStream.ts` hook — connects to SSE endpoint, appends streaming tokens to chatStore in real time
+- [x] Implement `chatListStore.ts` — fetches and holds all chats for sidebar rendering
+- [x] On new chat creation, add entry to chatListStore and trackerStore immediately
 
 ### Acceptance Criteria:
 - User can create a new chat, paste a JD, choose analysis type, and receive a structured analysis
@@ -507,26 +507,26 @@ Implement on-demand AI output generation: tailored resume, cover letter, and app
 ### What we do:
 
 **Backend: Output routes:**
-- [ ] Implement `POST /chats/{id}/outputs` — accepts output_type (resume, cover_letter, answer) and optional user_context string
-- [ ] Route to the correct function in `output_service.py` based on output_type
-- [ ] Stream response via SSE
-- [ ] On completion, save the full output content to the `generated_outputs` table
-- [ ] When output_type is resume, update the tracker entry resume_type to AI-Tailored
+- [x] Implement `POST /chats/{id}/outputs` — accepts output_type (resume, cover_letter, answer) and optional user_context string
+- [x] Route to the correct function in `output_service.py` based on output_type
+- [x] Stream response via SSE
+- [x] On completion, save the full output content to the `generated_outputs` table
+- [x] When output_type is resume, update the tracker entry resume_type to AI-Tailored
 
 **Backend: Output service:**
-- [ ] Implement `output_service.py` with `generate_resume(profile, jd_text, analysis)` using Azure GPT-4o
-- [ ] Resume output: full tailored resume grounded strictly in profile data, formatted for the specific JD, with no fabricated experience
-- [ ] Implement `output_service.py` with `generate_cover_letter(profile, jd_text, analysis, user_context)` using Azure GPT-4o
-- [ ] Cover letter output: personalized to the company and role, grounded in profile, incorporates any user_context provided
-- [ ] Implement `output_service.py` with `generate_answer(profile, jd_text, question, user_context)` using Azure GPT-4o
-- [ ] Answer output: answers the specific application question drawing only from the profile, no fabrication
-- [ ] All outputs stream token by token via SSE
+- [x] Implement `output_service.py` with `generate_resume(profile, jd_text, analysis)` using Azure GPT-4o
+- [x] Resume output: full tailored resume grounded strictly in profile data, formatted for the specific JD, with no fabricated experience
+- [x] Implement `output_service.py` with `generate_cover_letter(profile, jd_text, analysis, user_context)` using Azure GPT-4o
+- [x] Cover letter output: personalized to the company and role, grounded in profile, incorporates any user_context provided
+- [x] Implement `output_service.py` with `generate_answer(profile, jd_text, question, user_context)` using Azure GPT-4o
+- [x] Answer output: answers the specific application question drawing only from the profile, no fabrication
+- [x] All outputs stream token by token via SSE
 
 **Frontend: Output rendering:**
-- [ ] Generated outputs appear inline in the chat thread as formatted assistant messages with markdown rendering
-- [ ] Each output message includes a Copy button that copies the full content to clipboard
-- [ ] When a resume is generated, `chatStore` marks that chat as having an AI-tailored resume
-- [ ] `trackerStore` updates resume_type to AI-Tailored for that chat immediately without a page reload
+- [x] Generated outputs appear inline in the chat thread as formatted assistant messages with markdown rendering
+- [x] Each output message includes a Copy button that copies the full content to clipboard
+- [x] When a resume is generated, `chatStore` marks that chat as having an AI-tailored resume
+- [x] `trackerStore` updates resume_type to AI-Tailored for that chat immediately without a page reload
 
 ### Acceptance Criteria:
 - User can ask for a tailored resume in chat and receive a streaming response grounded in their profile and the JD
@@ -571,21 +571,21 @@ Build the full job tracker page where users can see all their applications in on
 ### What we do:
 
 **Backend: Tracker routes:**
-- [ ] Implement `GET /tracker` — returns all tracker entries for the current user ordered by created_at descending
-- [ ] Implement `PATCH /tracker/{chat_id}` — updates the status field for a specific tracker entry
+- [x] Implement `GET /tracker` — returns all tracker entries for the current user ordered by created_at descending
+- [x] Implement `PATCH /tracker/{chat_id}` — updates the status field for a specific tracker entry
 
 **Frontend: Tracker page:**
-- [ ] Implement `Tracker.tsx` — full tracker page with table, filter controls, and summary stats
-- [ ] Implement `TrackerTable.tsx` — table with columns: job title, company, date added, analysis type, resume type, status
-- [ ] Implement `TrackerRow.tsx` — single row with clickable job title (opens the chat), status picker, and resume type badge
-- [ ] Implement `StatusPicker.tsx` — dropdown to update status: Not Applied, Applied, Interviewing, Offer, Rejected
-- [ ] Filter pills at the top: All, Not Applied, Applied, Interviewing, Offer, Rejected
-- [ ] Clicking a job title navigates directly to that chat
-- [ ] Status updates call `PATCH /tracker/{chat_id}` and update `trackerStore` immediately without a full page reload
-- [ ] Empty state renders when no chats have been created yet
+- [x] Implement `Tracker.tsx` — full tracker page with table, filter controls, and summary stats
+- [x] Implement `TrackerTable.tsx` — table with columns: job title, company, date added, analysis type, resume type, status
+- [x] Implement `TrackerRow.tsx` — single row with clickable job title (opens the chat), status picker, and resume type badge
+- [x] Implement `StatusPicker.tsx` — dropdown to update status: Not Applied, Applied, Interviewing, Offer, Rejected
+- [x] Filter pills at the top: All, Not Applied, Applied, Interviewing, Offer, Rejected
+- [x] Clicking a job title navigates directly to that chat
+- [x] Status updates call `PATCH /tracker/{chat_id}` and update `trackerStore` immediately without a full page reload
+- [x] Empty state renders when no chats have been created yet
 
 **Frontend: Tracker store:**
-- [ ] Implement `trackerStore.ts` fully — fetch all entries on app load, update on status change, add entry when a new chat is created
+- [x] Implement `trackerStore.ts` fully — fetch all entries on app load, update on status change, add entry when a new chat is created
 
 ### Acceptance Criteria:
 - All job chats appear in the tracker with correct metadata: title, company, date, analysis type, resume type, status
@@ -630,30 +630,30 @@ Add loading states, error handling, empty states, and UX polish across the entir
 ### What we do:
 
 **Error Handling:**
-- [ ] Display a Toast notification on any API failure (analysis, chat, output generation, profile save)
-- [ ] Handle network timeout gracefully — retry once, then show error with a retry button
-- [ ] Handle Azure and Groq 429 rate limit errors with user-facing message: "Taking a moment, retrying..."
-- [ ] Handle database connection errors with a clear 500 error message
-- [ ] If streaming is interrupted mid-response, show partial response with a retry option
+- [x] Display a Toast notification on any API failure (analysis, chat, output generation, profile save)
+- [x] Handle network timeout gracefully — retry once, then show error with a retry button
+- [x] Handle Azure and Groq 429 rate limit errors with user-facing message: "Taking a moment, retrying..."
+- [x] Handle database connection errors with a clear 500 error message
+- [x] If streaming is interrupted mid-response, show partial response with a retry option
 
 **Loading States:**
-- [ ] Analysis: skeleton card while analysis is generating
-- [ ] Chat: typing indicator from message send until first streaming token arrives
-- [ ] Profile: skeleton sections while profile is loading
-- [ ] Tracker: skeleton rows while tracker entries are loading
-- [ ] Resume upload: progress stages rendering correctly (Uploading → Parsing → Saving)
+- [x] Analysis: skeleton card while analysis is generating
+- [x] Chat: typing indicator from message send until first streaming token arrives
+- [x] Profile: skeleton sections while profile is loading
+- [x] Tracker: skeleton rows while tracker entries are loading
+- [x] Resume upload: progress stages rendering correctly (Uploading → Parsing → Saving)
 
 **Empty States:**
-- [ ] Chat list sidebar: empty state with a prompt to create the first job chat
-- [ ] Tracker: empty state with a prompt to start applying
-- [ ] Profile: empty state if user skipped onboarding, with a prompt to upload their resume
+- [x] Chat list sidebar: empty state with a prompt to create the first job chat
+- [x] Tracker: empty state with a prompt to start applying
+- [x] Profile: empty state if user skipped onboarding, with a prompt to upload their resume
 
 **UX Polish:**
-- [ ] Confirm auto-scroll works reliably in chat thread during streaming
-- [ ] Confirm all panels have correct overflow and scrollbar behavior
-- [ ] Verify layout at 1280px, 1440px, and 1920px widths
-- [ ] Verify sidebar collapses cleanly on narrow screens
-- [ ] Dark mode: verify all CSS variables render correctly in dark theme
+- [x] Confirm auto-scroll works reliably in chat thread during streaming
+- [x] Confirm all panels have correct overflow and scrollbar behavior
+- [x] Verify layout at 1280px, 1440px, and 1920px widths
+- [x] Verify sidebar collapses cleanly on narrow screens
+- [x] Light-only brand; `color-scheme: light` enforced
 
 **Deploy: Frontend to Vercel:**
 - [ ] Connect GitHub repo to Vercel
@@ -663,7 +663,7 @@ Add loading states, error handling, empty states, and UX polish across the entir
 
 **Deploy: Backend to Render:**
 - [ ] Create new Web Service on Render pointing to `backend/`
-- [ ] Set start command: `uvicorn app.main:app --host 0.0.0.0 --port 8000`
+- [ ] Set start command: `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT` (or apply `backend/render.yaml` as a Blueprint, which sets this plus `PYTHON_VERSION`)
 - [ ] Set all environment variables in the Render dashboard
 - [ ] Run `alembic upgrade head` and confirm all tables exist in Supabase
 - [ ] Confirm `GET /health` returns `{ "status": "ok" }` on the live Render URL
@@ -680,11 +680,11 @@ Add loading states, error handling, empty states, and UX polish across the entir
 
 **README:**
 - [ ] Update with live Vercel and Render URLs
-- [ ] Add Supabase setup section
-- [ ] Add Azure AI Foundry setup section
-- [ ] Add Groq setup section
-- [ ] Add Prompt Strategy section
-- [ ] Add Tradeoffs section
+- [x] Add Supabase setup section
+- [x] Add Azure AI Foundry setup section
+- [x] Add Groq setup section
+- [x] Add Prompt Strategy section
+- [x] Add Tradeoffs section
 
 ### Acceptance Criteria:
 - Frontend is live at a public Vercel URL
@@ -715,3 +715,19 @@ A fully deployed, publicly accessible Applify beta with persistent data, working
 - Quick analysis first token arrives in under 3 seconds on live URLs
 - Zero 5xx errors during a clean end-to-end session on live URLs
 - README is accurate enough that someone unfamiliar with the project can set it up locally in under 20 minutes
+
+---
+
+## Deviations from Plan
+
+The phases above are the plan as written. Where the build diverged from it:
+
+- **Groq model.** `llama-3.3-70b-versatile` was decommissioned by Groq mid-build. The Groq model is now `openai/gpt-oss-120b`, set by `GROQ_MODEL`.
+- **Groq to Azure fallback.** Not in the plan. Groq's free tier has a daily token cap that backoff cannot outwait, so every model call names a preferred provider and falls back once to the other one (`app/services/llm.py`).
+- **Local Supabase.** Development runs the whole Supabase stack in Docker via the CLI (`npx supabase start`) rather than against a cloud project. A cloud project is a deployment concern only.
+- **JWKS-first token verification.** Local Supabase signs access tokens with ES256 signing keys rather than the legacy shared secret, so `utils/auth.py` verifies against the project JWKS first and falls back to `SUPABASE_JWT_SECRET`.
+- **Rule-based gap detection.** Phase 5 planned AI-powered gap detection. It is rules instead: the same profile has to produce the same nudges every time, or a dismissed nudge comes back under different wording.
+- **Analysis is not streamed.** Phase 6 assumed the detailed analysis streams. `POST /chats/{id}/analyze` is a single non-streaming JSON response with a skeleton card while it runs. Only chat replies and generated documents stream.
+- **Outputs have buttons as well as intent detection.** Phase 7 specified chat intent as the only trigger. Explicit resume, cover letter, and answer buttons were added alongside it. Both share one code path, and the button path writes the user turn it stands for, so the thread reads the same either way.
+- **Landing and Settings pages.** Neither is in the plan. `/` is a public landing page for signed-out visitors; `/settings` holds the account, the default analysis depth, and sign out.
+- **Python 3.11.** Verified and pinned in `backend/.python-version` and in `render.yaml` as `PYTHON_VERSION`, so local matches Render. 3.10 also works; 3.11 is the target.
