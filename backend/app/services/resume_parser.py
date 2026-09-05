@@ -10,8 +10,9 @@ The pipeline is deliberately two-stage:
 
 1. Deterministic text extraction (pdfplumber / python-docx). No model involved,
    so a parsing bug is reproducible.
-2. Structured extraction via Groq. The model only ever reads text that stage 1
-   produced, and its output is coerced through
+2. Structured extraction via ``services.llm`` -- Groq first, Azure GPT-4o when
+   Groq is rate-limited. The model only ever reads text that stage 1 produced,
+   and its output is coerced through
    :func:`app.api.schemas.profile.coerce_parsed_profile` before anyone sees it.
 """
 
@@ -25,8 +26,7 @@ import pdfplumber
 from docx import Document
 
 from app.api.schemas.profile import ParsedProfile, coerce_parsed_profile
-from app.services.groq_client import get_groq_client, get_groq_model
-from app.utils.retry import retry_with_backoff
+from app.services import llm
 
 logger = logging.getLogger(__name__)
 
@@ -305,7 +305,7 @@ def extract_text(
 
 
 # --------------------------------------------------------------------------
-# Structured extraction via Groq
+# Structured extraction via the provider layer
 # --------------------------------------------------------------------------
 
 
@@ -354,28 +354,31 @@ def parse_json_response(content: str) -> Any:
     )
 
 
-@retry_with_backoff(max_attempts=4, base_delay=1.0)
 def _call_groq_extraction(resume_text: str) -> str:
     """Send the resume text to Groq and return the raw response content.
 
-    Wrapped in backoff because Groq's free tier rate-limits readily and an
-    upload is a one-shot action the user is watching a spinner for.
+    Backoff and the Azure fallback both live in ``services.llm``: an upload is a
+    one-shot action the user is watching a spinner for, so a Groq daily cap must
+    produce a parsed profile from the other provider rather than a 502.
+
+    Returns:
+        The model's response, carrying ``.provider`` (see ``services.llm``).
     """
-    client = get_groq_client()
-    completion = client.chat.completions.create(
-        model=get_groq_model(),
-        messages=[
+    return llm.complete_json(
+        [
             {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": EXTRACTION_USER_TEMPLATE.format(resume_text=resume_text),
             },
         ],
-        temperature=EXTRACTION_TEMPERATURE,
         max_tokens=EXTRACTION_MAX_TOKENS,
-        response_format={"type": "json_object"},
+        temperature=EXTRACTION_TEMPERATURE,
+        prefer=llm.GROQ,
+        purpose="resume extraction",
+        max_attempts=4,
+        base_delay=1.0,
     )
-    return completion.choices[0].message.content or ""
 
 
 def extract_profile(raw_text: str) -> ParsedProfile:

@@ -5,7 +5,8 @@ is one JSON object per ``data:`` line:
 
     {"type": "start", "message_id": "<uuid>", "kind": "chat"}
     {"type": "token", "content": "..."}          (repeated)
-    {"type": "done",  "message_id": "<uuid>", "content": "<full text>"}
+    {"type": "done",  "message_id": "<uuid>", "content": "<full text>",
+     "provider": "groq"|"azure"}
     {"type": "error", "message": "...", "message_id": "<uuid>", "partial": true}
 
 ``start`` announces the assistant message's id before there is anything to
@@ -16,7 +17,9 @@ streams into is the id the message is finally saved under.
 the tokens come from ``output_service`` instead of the conversational model, and
 the ``done`` event carries the stored document's ``output_id`` as well -- plus
 ``resume_type`` when the document was a resume, so the tracker updates without a
-refetch.
+refetch. ``done`` also names the ``provider`` that served the reply, which is
+only known once the stream has run: chat prefers Groq but falls back to Azure
+when Groq is rate-limited.
 
 Whatever streamed before a failure is persisted, and the ``error`` event names
 the same ``message_id`` with ``partial: true``, so the frontend can leave the
@@ -43,7 +46,13 @@ from app.api.routes.chats import require_chat
 from app.api.schemas.messages import MessageRequest, MessageResponse
 from app.data.deps import CurrentUser, DbSession
 from app.models.job_chat import JobChat
-from app.services import analysis_service, chat_service, output_service, profile_service
+from app.services import (
+    analysis_service,
+    chat_service,
+    llm,
+    output_service,
+    profile_service,
+)
 from app.utils.context_builder import build_messages
 
 logger = logging.getLogger(__name__)
@@ -79,6 +88,7 @@ def open_token_stream(
     user_id: str,
     kind: str,
     user_message: str,
+    state: dict[str, Any] | None = None,
 ) -> AsyncIterator[str]:
     """Open the token stream for one assistant turn.
 
@@ -92,6 +102,10 @@ def open_token_stream(
         user_id: The caller, for the profile lookup.
         kind: ``chat`` for a conversational reply, otherwise the document type.
         user_message: The message that triggered this turn, already persisted.
+        state: Optional dict this turn writes its token source into, so
+            :func:`assistant_event_stream` can report on ``done`` which provider
+            served the reply. Wrapping the source in ``iterate_in_threadpool``
+            hides its attributes, hence the handle rather than a return value.
 
     Returns:
         An async iterator of text chunks.
@@ -102,13 +116,14 @@ def open_token_stream(
     history = chat_service.history_for_context(db, chat.id)
 
     if kind == chat_service.INTENT_CHAT:
-        # The blocking Groq iterator is pumped on a worker thread so it never
-        # stalls the event loop mid-stream.
-        return iterate_in_threadpool(
-            chat_service.stream_chat_reply(
-                build_messages(profile_json, chat.jd_text, analysis, history)
-            )
+        source = chat_service.stream_chat_reply(
+            build_messages(profile_json, chat.jd_text, analysis, history)
         )
+        if state is not None:
+            state["source"] = source
+        # The blocking provider iterator is pumped on a worker thread so it
+        # never stalls the event loop mid-stream.
+        return iterate_in_threadpool(source)
 
     return output_service.generate_output(
         kind,
@@ -120,12 +135,26 @@ def open_token_stream(
     )
 
 
+def stream_provider(kind: str, state: dict[str, Any] | None) -> str | None:
+    """Return which provider served this turn, or None if it is not known.
+
+    A document kind is always Azure. A chat kind is whatever ``services.llm``
+    settled on, which is only decided once the first chunk has arrived -- which
+    is why this belongs on ``done`` and could not go on ``start``.
+    """
+    if kind in chat_service.OUTPUT_INTENTS:
+        return llm.AZURE
+    source = (state or {}).get("source")
+    return llm.provider_of(source)
+
+
 async def assistant_event_stream(
     db: Session,
     chat_id: uuid.UUID,
     kind: str,
     tokens: AsyncIterator[str],
     assistant_id: uuid.UUID | None = None,
+    state: dict[str, Any] | None = None,
 ) -> AsyncIterator[str]:
     """Yield the SSE events for one assistant reply, and persist it.
 
@@ -146,6 +175,8 @@ async def assistant_event_stream(
         assistant_id: Pre-chosen message id, generated here when omitted. It is
             announced on ``start`` before there is anything to store, so the id
             the frontend streams into is the id the row is saved under.
+        state: The dict :func:`open_token_stream` recorded its token source in,
+            used to name the serving provider on ``done``.
 
     Yields:
         Rendered SSE events.
@@ -201,6 +232,10 @@ async def assistant_event_stream(
         "message_id": str(message_id),
         "content": text,
     }
+
+    provider = stream_provider(kind, state)
+    if provider:
+        done["provider"] = provider
 
     if kind in chat_service.OUTPUT_INTENTS:
         _, output, entry = await run_in_threadpool(
@@ -274,10 +309,11 @@ def create_message(
     chat_service.save_message(db, chat.id, "user", content, kind="chat")
 
     kind = chat_service.detect_intent(content)
-    tokens = open_token_stream(db, chat, user_id, kind, content)
+    state: dict[str, Any] = {}
+    tokens = open_token_stream(db, chat, user_id, kind, content, state)
 
     return StreamingResponse(
-        assistant_event_stream(db, chat.id, kind, tokens),
+        assistant_event_stream(db, chat.id, kind, tokens, state=state),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )

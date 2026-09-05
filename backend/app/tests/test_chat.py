@@ -1,9 +1,14 @@
 """Tests for the job chat and message routes, intent detection, and the context
 builder.
 
-Everything runs offline. Groq is replaced at the ``_open_chat_stream`` /
+Everything runs offline. Groq is replaced at the ``llm._open_groq_stream`` /
 ``_call_groq_classifier`` seam, so the SSE tests exercise the real route, the
-real generator, and the real persistence path with only the network faked.
+real generator, the real provider layer, and the real persistence path with only
+the network faked. Patching the raw provider call rather than
+``chat_service.stream_chat_reply`` keeps the fallback logic in the path under
+test: the failures these tests inject are not rate limits, so they must
+propagate rather than reach for Azure -- and ``test_llm.py`` is where the
+fallback itself is exercised.
 
 ``test_db_roundtrip`` is the one exception: it talks to the local Supabase
 Postgres and is opt-in behind ``RUN_DB=1``.
@@ -23,7 +28,7 @@ from app.models.chat_message import ChatMessage
 from app.models.job_chat import JobChat
 from app.models.profile import Profile
 from app.models.tracker_entry import TrackerEntry
-from app.services import chat_service, output_service
+from app.services import chat_service, llm, output_service
 from app.tests.conftest import OTHER_USER_ID, TEST_USER_ID, FakeSession
 from app.utils.context_builder import build_context, build_messages
 
@@ -155,7 +160,7 @@ def fake_groq_stream(
         fail_after: Raise mid-stream once this many chunks have been emitted.
     """
 
-    def _open(messages: list[dict[str, str]]):
+    def _open(messages: list[dict[str, str]], **kwargs):
         def chunks():
             for index, token in enumerate(tokens):
                 if fail_after is not None and index == fail_after:
@@ -164,7 +169,7 @@ def fake_groq_stream(
 
         return chunks()
 
-    monkeypatch.setattr(chat_service, "_open_chat_stream", _open)
+    monkeypatch.setattr(llm, "_open_groq_stream", _open)
 
 
 def parse_sse(body: str) -> list[dict]:
@@ -592,10 +597,10 @@ def test_post_message_with_output_intent_delegates_to_output_service(
     db.seed(make_tracker(chat.id))
     db.seed(make_profile())
 
-    def explode(messages):  # pragma: no cover - asserts the chat model is unused
+    def explode(messages, **kwargs):  # pragma: no cover - the chat model is unused
         raise AssertionError("chat model must not run for an output intent")
 
-    monkeypatch.setattr(chat_service, "_open_chat_stream", explode)
+    monkeypatch.setattr(llm, "_open_groq_stream", explode)
     monkeypatch.setattr(
         output_service,
         "_open_output_stream",
@@ -638,11 +643,11 @@ def test_post_message_sends_profile_jd_and_analysis_to_the_model(
     )
     captured: dict = {}
 
-    def _open(messages):
+    def _open(messages, **kwargs):
         captured["messages"] = messages
         return iter([_Chunk("ok")])
 
-    monkeypatch.setattr(chat_service, "_open_chat_stream", _open)
+    monkeypatch.setattr(llm, "_open_groq_stream", _open)
 
     auth_client.post(
         "/chats/{}/messages".format(chat.id), json={"content": "What should I stress?"}

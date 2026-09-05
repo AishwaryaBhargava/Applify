@@ -16,6 +16,7 @@ the SSE frames, the persistence, the tracker flip -- is the message route's own
 """
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -80,10 +81,11 @@ def create_output(
     # the generation reads it as the latest turn of the conversation.
     chat_service.save_message(db, chat.id, "user", content, kind="chat")
 
-    tokens = open_token_stream(db, chat, user_id, kind, content)
+    state: dict[str, Any] = {}
+    tokens = open_token_stream(db, chat, user_id, kind, content, state)
 
     return StreamingResponse(
-        assistant_event_stream(db, chat.id, kind, tokens),
+        assistant_event_stream(db, chat.id, kind, tokens, state=state),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )

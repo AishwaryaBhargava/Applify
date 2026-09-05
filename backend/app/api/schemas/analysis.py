@@ -22,6 +22,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     ValidationInfo,
     field_validator,
 )
@@ -54,7 +55,16 @@ class AnalysisRequest(BaseModel):
 
 
 class QuickSnapshot(BaseModel):
-    """Fast Groq-generated fit snapshot."""
+    """Fast Groq-generated fit snapshot.
+
+    ``_provider`` records which model actually served it -- Groq normally, Azure
+    when Groq was capped. Private so it stays out of ``model_dump()``: it is
+    provenance about the request, not part of the analysis, and
+    ``analysis_service.save_analysis`` copies it into ``full_json`` under
+    ``_provider`` deliberately rather than by accident.
+    """
+
+    _provider: str = PrivateAttr(default="")
 
     fit_score: int = Field(ge=0, le=100)
     strengths: list[str] = Field(default_factory=list)
@@ -79,7 +89,12 @@ class SkillAssessment(BaseModel):
 
 
 class DetailedBreakdown(BaseModel):
-    """Deeper Azure GPT-4o analysis: skill by skill, plus an overall narrative."""
+    """Deeper Azure GPT-4o analysis: skill by skill, plus an overall narrative.
+
+    ``_provider`` carries the same provenance as :class:`QuickSnapshot`.
+    """
+
+    _provider: str = PrivateAttr(default="")
 
     fit_score: int = Field(ge=0, le=100)
     strengths: list[str] = Field(default_factory=list)

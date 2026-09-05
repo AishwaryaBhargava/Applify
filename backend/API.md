@@ -24,6 +24,25 @@ deleted, is a **404** -- never a 403, which would confirm it exists.
 | 422 | Request body failed validation, or the chat has no JD |
 | 502 | The model provider was unreachable or returned nothing usable |
 
+### Provider fallback
+
+Every model call names a preferred provider and falls back **once** to the other
+one when the preferred provider is rate-limited, 5xx, or unreachable. Chat,
+quick analysis, and resume extraction prefer Groq; the detailed analysis and all
+generated documents prefer Azure GPT-4o. A `400`, `401`, `403`, or `422` from a
+provider means our own request is wrong, and is never retried elsewhere.
+
+Groq's free tier has a **daily** token cap. A daily cap ("tokens per day",
+"TPD") skips the backoff retries entirely and fails over immediately -- waiting
+cannot help before midnight. A per-minute limit is backed off first and only
+then failed over.
+
+So a `502` now means **both** providers failed, not one. Which provider actually
+served a request is reported where it is free: `provider` on the SSE `done`
+event, and `full_json._provider` on an analysis. Set `LLM_FALLBACK_ENABLED=false`
+to disable failover, or `LLM_PREFER_AZURE_FOR_CHAT=true` to send chat to Azure
+first.
+
 ---
 
 ## Health
@@ -170,7 +189,9 @@ Response `200`, `AnalysisResponse`:
 
 `fit_score`, `strengths`, `gaps`, and `verdict` are the summary and are present
 for **both** depths, so one card renders either. `full_json` carries the
-depth-specific detail:
+depth-specific detail, plus `_provider` (`"groq"` or `"azure"`) naming the model
+that produced it -- underscored because it describes the request rather than the
+candidate, and safe for a client to ignore:
 
 * **quick** -- `{fit_score, strengths, gaps, verdict}`
 * **detailed** --
@@ -191,9 +212,14 @@ depth-specific detail:
   "fit_score": 68,
   "strengths": ["...", "...", "..."],
   "gaps": ["...", "...", "..."],
-  "verdict": "Apply, but lead with the payments work."
+  "verdict": "Apply, but lead with the payments work.",
+  "_provider": "azure"
 }
 ```
+
+A quick analysis normally reads `"_provider": "groq"`; `"azure"` means Groq was
+rate-limited and Azure covered for it. Scores from two different models are not
+comparable to the last point, which is the honest reason the field is exposed.
 
 Side effects of a successful run, all in one transaction:
 
@@ -283,7 +309,7 @@ data: {"type":"token","content":"Your "}
 
 data: {"type":"token","content":"Python experience "}
 
-data: {"type":"done","message_id":"7c9e...","content":"Your Python experience fits."}
+data: {"type":"done","message_id":"7c9e...","content":"Your Python experience fits.","provider":"groq"}
 
 ```
 
@@ -291,7 +317,7 @@ data: {"type":"done","message_id":"7c9e...","content":"Your Python experience fi
 |---|---|---|
 | `start` | `message_id`, `kind` | The assistant message's id, chosen up front, and the detected intent. Render an empty bubble and stream into it. |
 | `token` | `content` | One chunk. Append it; chunks are not line- or word-aligned. |
-| `done` | `message_id`, `content`, (`output_id`, `resume_type`) | The full text. The message is persisted at this point. For an output `kind` the event also carries `output_id`, and for `resume` the tracker's new `resume_type`. The stream closes. |
+| `done` | `message_id`, `content`, `provider`, (`output_id`, `resume_type`) | The full text. The message is persisted at this point. `provider` is `"groq"` or `"azure"` -- which model actually served the reply, known only once the stream has run, which is why it cannot be on `start`. For an output `kind` the event also carries `output_id`, and for `resume` the tracker's new `resume_type`. The stream closes. |
 | `error` | `message`, `message_id`, `partial`, `content` | Generation failed. `partial: true` means `content` did stream and **has been persisted** under `message_id` -- leave it on screen and offer a retry. `partial: false` means nothing was stored. |
 
 The user message is persisted before the stream opens, so it survives a failure.
@@ -326,8 +352,13 @@ the stream is an Azure GPT-4o document rather than a Groq chat reply. See
 
 #### Model context
 
-Chat replies come from Groq (`GROQ_MODEL`, streaming, `max_tokens` 2048). The
-context is assembled by `utils/context_builder.build_messages`:
+Chat replies come from Groq (`GROQ_MODEL`, streaming, `max_tokens` 2048), or
+from Azure GPT-4o when Groq is rate-limited before the first token -- see
+[Provider fallback](#provider-fallback). A stream that fails **after** tokens
+have reached the client does *not* fail over: half a reply from each model would
+contradict itself, so it is reported as an `error` with `partial: true`, exactly
+like any other mid-stream failure. The context is assembled by
+`utils/context_builder.build_messages`:
 
 * a **system message** holding the persona, a compact profile summary rendered
   from `parsed_json`, the full JD, and the analysis summary when one exists;
@@ -395,7 +426,7 @@ data: {"type":"start","message_id":"7c9e...","kind":"resume"}
 
 data: {"type":"token","content":"# Priya "}
 
-data: {"type":"done","message_id":"7c9e...","content":"# Priya Raman\n...","output_id":"1a2b...","resume_type":"tailored"}
+data: {"type":"done","message_id":"7c9e...","content":"# Priya Raman\n...","provider":"azure","output_id":"1a2b...","resume_type":"tailored"}
 
 ```
 
@@ -410,6 +441,7 @@ data: {"type":"done","message_id":"7c9e...","content":"# Priya Raman\n...","outp
 |---|---|---|
 | `message_id` | yes | The assistant message, as announced on `start` |
 | `content` | yes | The full document, markdown |
+| `provider` | yes | Which model served it -- `"azure"` for every document kind |
 | `output_id` | output kinds only | The new `generated_outputs` row, so the client can link to it without refetching |
 | `resume_type` | `resume` only | The tracker's new value, `"tailored"`. Apply it to the tracker store directly -- no `GET /tracker` needed |
 

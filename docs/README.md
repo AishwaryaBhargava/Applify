@@ -109,6 +109,8 @@ AZURE_OPENAI_API_VERSION=2024-12-01-preview
 AZURE_GPT4O_DEPLOYMENT=gpt-4o
 GROQ_API_KEY=<your-groq-key>
 GROQ_MODEL=openai/gpt-oss-120b
+LLM_FALLBACK_ENABLED=true
+LLM_PREFER_AZURE_FOR_CHAT=false
 SUPABASE_DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<dbname>
 SUPABASE_JWT_SECRET=<your-supabase-jwt-secret>
 SUPABASE_URL=https://<your-project>.supabase.co
@@ -200,6 +202,8 @@ Then apply the schema: `cd backend && alembic upgrade head`.
 
 **Output generation** (resume, cover letter, answers) uses Azure GPT-4o with prompts that instruct the model to ground every output strictly in the user's profile and the JD. No fabrication of experience or credentials is permitted.
 
+**Provider fallback.** Groq's free tier has a daily token cap, and backoff cannot outwait a limit that resets at midnight — so every model call names a preferred provider and, when that provider is rate-limited, 5xx, or unreachable, is re-sent once to the other one with the same prompt, temperature, and token budget (`backend/app/services/llm.py`). A daily cap ("tokens per day", "TPD") skips the retries entirely and fails over immediately; a per-minute limit is backed off first. A 400/401/422 is our own request being wrong and is never retried elsewhere. Chat streams are the one asymmetric case: the swap is only safe *before the first token reaches the user*, because a reply whose halves came from two different models would contradict itself, so a mid-stream failure is surfaced as a partial reply exactly as before. Which provider served a request comes back on the SSE `done` event and in an analysis's `full_json._provider`. `LLM_FALLBACK_ENABLED=false` turns failover off; `LLM_PREFER_AZURE_FOR_CHAT=true` sends chat to Azure first, with no code change, for a day when Groq is capped from the first message.
+
 ---
 
 ## Tradeoffs
@@ -207,6 +211,8 @@ Then apply the schema: `cd backend && alembic upgrade head`.
 | Decision | Tradeoff |
 |---|---|
 | Groq for chat, Azure for analysis and outputs | Groq is faster and cheaper for conversational turns. Azure GPT-4o produces higher quality for longer, more structured outputs. The split optimizes for both. |
+| Automatic fallback to the other provider on a rate limit | A capped Groq degrades to a slower, costlier Azure answer instead of a 502. The cost is that a request can quietly cost Azure tokens and read slightly differently in tone; `full_json._provider` and the SSE `done` event say which model answered, and `LLM_FALLBACK_ENABLED=false` turns it off. |
+| No fallback once a chat stream has started | Switching models mid-reply would splice two different answers together in front of the user. A stream that fails after the first token keeps today's behaviour: the partial reply is persisted and an error event offers a retry. |
 | Resumes parsed in memory, not stored | Simpler storage, but the original file is not recoverable. Only structured data is saved. |
 | Supabase Auth instead of custom auth | Saves significant development time. Supabase handles JWTs, sessions, and OAuth. Backend only verifies the token. |
 | No job listings | Applify is not a job board. Keeping listings out keeps the product focused and avoids the complexity of sourcing and maintaining fresh listings. |

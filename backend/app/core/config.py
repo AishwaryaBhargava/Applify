@@ -41,6 +41,17 @@ class Settings(BaseSettings):
     # model swap never needs a code change.
     groq_model: str = Field(default="openai/gpt-oss-120b", alias="GROQ_MODEL")
 
+    # --- Provider fallback (services/llm.py) ---
+    # Groq's free tier has a daily token cap. When it is reached, the affected
+    # call is re-sent to Azure GPT-4o rather than failing. Set false to make a
+    # provider outage visible instead of quietly doubling Azure spend.
+    llm_fallback_enabled: bool = Field(default=True, alias="LLM_FALLBACK_ENABLED")
+    # Send chat to Azure first instead of Groq. The escape hatch for a day when
+    # Groq is capped from the first request: no code change, no redeploy.
+    llm_prefer_azure_for_chat: bool = Field(
+        default=False, alias="LLM_PREFER_AZURE_FOR_CHAT"
+    )
+
     # --- Supabase (Postgres + Auth) ---
     supabase_database_url: str = Field(default="", alias="SUPABASE_DATABASE_URL")
     supabase_jwt_secret: str = Field(default="", alias="SUPABASE_JWT_SECRET")

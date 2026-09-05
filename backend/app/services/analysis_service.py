@@ -34,10 +34,8 @@ from app.api.schemas.analysis import (
 from app.models.analysis import Analysis
 from app.models.chat_message import ChatMessage
 from app.models.job_chat import JobChat
-from app.services.azure_client import get_azure_client, get_deployment_name
-from app.services.groq_client import get_groq_client, get_groq_model
+from app.services import llm
 from app.utils.context_builder import format_jd, format_profile
-from app.utils.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -206,36 +204,51 @@ def _outermost_object(text: str) -> str:
     return text[start : end + 1]
 
 
-@retry_with_backoff(max_attempts=4, base_delay=1.0)
 def _call_groq_quick(prompt: str) -> str:
-    """Send the quick-analysis prompt to Groq and return the raw content."""
-    completion = get_groq_client().chat.completions.create(
-        model=get_groq_model(),
-        messages=[
+    """Send the quick-analysis prompt to Groq and return the raw content.
+
+    Groq first because a snapshot is watched live, with Azure as the fallback
+    when Groq is capped -- a snapshot that arrives a second late is worth far
+    more than a 502.
+
+    Returns:
+        The model's response, carrying ``.provider`` (see ``services.llm``).
+    """
+    return llm.complete_json(
+        [
             {"role": "system", "content": QUICK_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
-        temperature=ANALYSIS_TEMPERATURE,
         max_tokens=QUICK_MAX_TOKENS,
-        response_format={"type": "json_object"},
+        temperature=ANALYSIS_TEMPERATURE,
+        prefer=llm.GROQ,
+        purpose="quick analysis",
+        max_attempts=4,
+        base_delay=1.0,
     )
-    return completion.choices[0].message.content or ""
 
 
-@retry_with_backoff(max_attempts=4, base_delay=1.0)
 def _call_azure_detailed(prompt: str) -> str:
-    """Send the detailed-analysis prompt to Azure GPT-4o and return the content."""
-    completion = get_azure_client().chat.completions.create(
-        model=get_deployment_name(),
-        messages=[
+    """Send the detailed-analysis prompt to Azure GPT-4o and return the content.
+
+    Azure first, for the depth the breakdown needs; Groq is the fallback so an
+    Azure outage degrades the analysis rather than losing it.
+
+    Returns:
+        The model's response, carrying ``.provider`` (see ``services.llm``).
+    """
+    return llm.complete_json(
+        [
             {"role": "system", "content": DETAILED_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
-        temperature=ANALYSIS_TEMPERATURE,
         max_tokens=DETAILED_MAX_TOKENS,
-        response_format={"type": "json_object"},
+        temperature=ANALYSIS_TEMPERATURE,
+        prefer=llm.AZURE,
+        purpose="detailed analysis",
+        max_attempts=4,
+        base_delay=1.0,
     )
-    return completion.choices[0].message.content or ""
 
 
 def run_quick_analysis(
@@ -256,7 +269,9 @@ def run_quick_analysis(
     except Exception as exc:
         logger.exception("Groq quick analysis failed")
         raise AnalysisError("Quick analysis failed: {}".format(exc)) from exc
-    return coerce_quick_snapshot(_parse_json_object(content))
+    snapshot = coerce_quick_snapshot(_parse_json_object(content))
+    snapshot._provider = llm.provider_of(content, llm.GROQ)
+    return snapshot
 
 
 def run_detailed_analysis(
@@ -277,7 +292,9 @@ def run_detailed_analysis(
     except Exception as exc:
         logger.exception("Azure detailed analysis failed")
         raise AnalysisError("Detailed analysis failed: {}".format(exc)) from exc
-    return coerce_detailed_breakdown(_parse_json_object(content))
+    breakdown = coerce_detailed_breakdown(_parse_json_object(content))
+    breakdown._provider = llm.provider_of(content, llm.AZURE)
+    return breakdown
 
 
 def run_analysis(
@@ -436,6 +453,13 @@ def save_analysis(
     """
     now = datetime.now(timezone.utc)
     full_json = result.model_dump()
+    # Which provider actually served the analysis, recorded next to the result
+    # it produced. Underscored because it describes the row rather than the
+    # candidate, and it costs nothing to carry -- there is no second table and
+    # no second request to ask after the fact.
+    provider = getattr(result, "_provider", "")
+    if provider:
+        full_json["_provider"] = provider
 
     analysis = Analysis(
         id=uuid.uuid4(),

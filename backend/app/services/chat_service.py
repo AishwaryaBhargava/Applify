@@ -9,8 +9,10 @@ Three responsibilities, in the order a request meets them:
 2. **Intent detection.** A user message is classified as ``chat``, ``resume``,
    ``cover_letter``, or ``answer``. Rules first, a one-line Groq call only when
    the rules are genuinely unsure. Most turns cost nothing.
-3. **Streaming.** The conversational reply comes from Groq with ``stream=True``;
-   the route wraps the chunks as SSE events.
+3. **Streaming.** The conversational reply is streamed through
+   ``services.llm``, which prefers Groq and falls back to Azure GPT-4o when
+   Groq is capped before the first token; the route wraps the chunks as SSE
+   events.
 
 Ids and timestamps are assigned here rather than left to the column defaults, so
 a freshly created row is complete without a post-commit refresh round trip --
@@ -22,13 +24,14 @@ import re
 import uuid
 from collections.abc import Iterator
 from datetime import datetime, timezone
-from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.chat_message import ChatMessage
 from app.models.job_chat import JobChat
 from app.models.tracker_entry import TrackerEntry
+from app.services import llm
 from app.services.groq_client import MIN_MAX_TOKENS, get_groq_client, get_groq_model
 from app.utils.retry import retry_with_backoff
 
@@ -178,41 +181,43 @@ def detect_intent(message: str) -> str:
 # --------------------------------------------------------------------------
 
 
-@retry_with_backoff(max_attempts=3, base_delay=1.0)
-def _open_chat_stream(messages: list[dict[str, str]]) -> Any:
-    """Open the Groq streaming completion.
+def chat_provider() -> str:
+    """Return the provider chat should try first.
 
-    Separate from the generator below so the retry decorator actually wraps the
-    network call: decorating a generator function would only retry the creation
-    of the generator object, which never fails.
+    Read per call rather than at import so flipping ``LLM_PREFER_AZURE_FOR_CHAT``
+    takes effect on a restart with no code change -- the escape hatch for a day
+    when Groq is capped from the first message and paying the fallback's failed
+    first attempt on every turn is not worth it.
     """
-    return get_groq_client().chat.completions.create(
-        model=get_groq_model(),
-        messages=messages,
-        temperature=CHAT_TEMPERATURE,
-        max_tokens=CHAT_MAX_TOKENS,
-        stream=True,
-    )
+    return llm.AZURE if settings.llm_prefer_azure_for_chat else llm.GROQ
 
 
 def stream_chat_reply(messages: list[dict[str, str]]) -> Iterator[str]:
-    """Stream the Groq assistant reply token by token.
+    """Stream the assistant reply token by token.
+
+    Groq serves chat by default; ``services.llm`` falls back to Azure GPT-4o if
+    Groq is rate-limited *before the first token*. After the first token the
+    error stands: switching models mid-reply would splice two different answers
+    together in front of the user.
 
     Args:
         messages: An OpenAI-style messages list, as built by
             ``utils.context_builder.build_messages``.
 
-    Yields:
-        Non-empty text chunks, ready to be wrapped as SSE events by the route.
+    Returns:
+        A ``llm.ProviderStream`` of non-empty text chunks -- an iterator the
+        route wraps as SSE events, whose ``provider`` attribute names whoever
+        served it once the first chunk has arrived.
     """
-    for chunk in _open_chat_stream(messages):
-        choices = getattr(chunk, "choices", None) or []
-        if not choices:
-            continue
-        delta = getattr(choices[0], "delta", None)
-        content = getattr(delta, "content", None) if delta is not None else None
-        if content:
-            yield content
+    return llm.stream_text(
+        messages,
+        max_tokens=CHAT_MAX_TOKENS,
+        temperature=CHAT_TEMPERATURE,
+        prefer=chat_provider(),
+        purpose="chat",
+        max_attempts=3,
+        base_delay=1.0,
+    )
 
 
 # --------------------------------------------------------------------------
