@@ -127,6 +127,42 @@ VITE_SUPABASE_ANON_KEY=<your-supabase-anon-key>
 
 ## Supabase Setup
 
+### Local development (default)
+
+The whole stack -- Postgres, Auth, Studio, mail catcher -- runs in Docker via the
+Supabase CLI. Requires Docker Desktop.
+
+```bash
+npx supabase start   # first run pulls ~10 images, several minutes
+npx supabase stop    # data is kept; add --no-backup to wipe the database
+```
+
+| Service | URL |
+| --- | --- |
+| API gateway | http://127.0.0.1:54321 |
+| Postgres | postgresql://postgres:postgres@127.0.0.1:54322/postgres |
+| Studio | http://127.0.0.1:54323 |
+| Mailpit (sent emails) | http://127.0.0.1:54324 |
+
+The three env values, already filled into `.env.example` (they are the CLI's
+public demo credentials, not secrets):
+
+```
+SUPABASE_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+SUPABASE_URL=http://127.0.0.1:54321
+VITE_SUPABASE_ANON_KEY=<the ANON_KEY printed by supabase start>
+```
+
+`supabase start` also prints `SUPABASE_JWT_SECRET` (the legacy HS256 secret) and
+a `sb_publishable_...` key -- either that or the JWT `ANON_KEY` works as
+`VITE_SUPABASE_ANON_KEY`. Local auth signs tokens with ES256 signing keys, so
+the backend's JWKS path is what actually verifies them. Email confirmation is
+off in `supabase/config.toml`, so signup logs you straight in.
+
+Then apply the schema: `cd backend && alembic upgrade head`.
+
+### Cloud project (deployment)
+
 1. Go to [supabase.com](https://supabase.com) and create a new project
 2. From Project Settings, copy the database connection string (Session mode, port 5432) and add it as `SUPABASE_DATABASE_URL`
 3. From Project Settings > API, copy the `anon` key and add it as `VITE_SUPABASE_ANON_KEY`

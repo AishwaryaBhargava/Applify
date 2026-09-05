@@ -19,3 +19,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+# Supabase (local stack; supabase/.gitignore also covers these)
+supabase/.temp
+supabase/.branches
