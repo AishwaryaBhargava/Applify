@@ -1,0 +1,76 @@
+# Render Blueprint for the Applify backend.
+#
+# Render looks for `render.yaml` at the *repository root*, so to deploy from a
+# Blueprint either move or symlink this file there, or create the Web Service
+# from the dashboard and copy the settings below by hand. It is kept here, next
+# to the service it describes, so it stays with the code it deploys.
+#
+# Two things are worth reading rather than skimming:
+#
+#   * The start command runs migrations before the server. Render's free tier
+#     has no separate release phase, so `alembic upgrade head &&` is how the
+#     schema stays in step with the code -- and the `&&` matters: a failed
+#     migration must stop the deploy rather than boot an app against an old
+#     schema.
+#   * Every secret is `sync: false`, which means Render prompts for it on the
+#     first deploy and never stores it in this file. Nothing here is a
+#     credential, so this file is safe in git.
+services:
+  - type: web
+    name: applify-api
+    runtime: python
+    plan: free
+    region: oregon
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # Returns 200 whenever the process is serving, with database reachability
+    # reported in the body -- so a database blip does not get the instance
+    # recycled. See app/api/routes/health.py.
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Render's Python runtime reads this; it must match backend/.python-version.
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: LOG_LEVEL
+        value: INFO
+
+      # --- Azure AI Foundry (GPT-4o: detailed analysis + document generation) ---
+      - key: AZURE_OPENAI_ENDPOINT
+        sync: false
+      - key: AZURE_OPENAI_API_KEY
+        sync: false
+      - key: AZURE_OPENAI_API_VERSION
+        value: 2024-12-01-preview
+      - key: AZURE_GPT4O_DEPLOYMENT
+        value: gpt-4o
+
+      # --- Groq (chat + quick analysis) ---
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+
+      # --- Provider fallback (app/services/llm.py) ---
+      - key: LLM_FALLBACK_ENABLED
+        value: "true"
+      - key: LLM_PREFER_AZURE_FOR_CHAT
+        value: "false"
+
+      # --- Supabase (Postgres + Auth) ---
+      # SUPABASE_DATABASE_URL must be the Session-mode pooler URL (port 5432).
+      # The Transaction-mode pooler on 6543 does not support the prepared
+      # statements SQLAlchemy's psycopg2 driver issues.
+      - key: SUPABASE_DATABASE_URL
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+
+      # --- CORS ---
+      # The Vercel frontend origin, e.g. https://applify.vercel.app
+      # (comma-separated for more than one).
+      - key: ALLOWED_ORIGINS
+        sync: false

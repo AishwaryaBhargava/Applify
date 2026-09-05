@@ -3,6 +3,12 @@
 The database URL is read from ``app.core.config.settings`` (i.e. from
 ``backend/.env`` or the deployment environment), never from ``alembic.ini``, so
 there is exactly one place credentials live.
+
+Connection arguments come from ``app.data.database.connect_args_for``, the same
+function the application engine uses, so a migration negotiates TLS exactly the
+way the running app does. That matters on Render, where the release step is
+``alembic upgrade head``: a migration that cannot connect while the app can is a
+deploy that half-succeeds.
 """
 
 from logging.config import fileConfig
@@ -14,7 +20,7 @@ from app.core.config import settings
 
 # Importing app.models registers every table on Base.metadata.
 import app.models  # noqa: F401  (side-effect import)
-from app.data.database import Base
+from app.data.database import Base, connect_args_for
 
 config = context.config
 
@@ -51,6 +57,7 @@ def run_migrations_online() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=connect_args_for(settings.supabase_database_url),
     )
 
     with connectable.connect() as connection:

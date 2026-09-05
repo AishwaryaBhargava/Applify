@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
 from app.api.routes.chats import CHAT_NOT_FOUND
 from app.models.analysis import Analysis
@@ -537,6 +538,75 @@ def test_post_message_error_persists_the_partial_reply(
     assert len(assistant) == 1
     assert assistant[0].content == "Half a reply"
     assert str(assistant[0].id) == error["message_id"]
+
+
+def fail_saving_the_assistant_turn(
+    monkeypatch: pytest.MonkeyPatch, exc: BaseException
+) -> None:
+    """Make persisting the *assistant* message fail, leaving the user turn alone.
+
+    Mirrors the real failure mode: the user's message was written seconds ago
+    on a working connection, and the database went away while the model was
+    still generating.
+    """
+    original = chat_service.save_message
+
+    def guarded(db, chat_id, role, content, kind="chat", message_id=None):
+        if role == "assistant":
+            raise exc
+        return original(db, chat_id, role, content, kind, message_id)
+
+    monkeypatch.setattr(chat_service, "save_message", guarded)
+
+
+def test_post_message_reports_a_failed_save_as_an_error_event(
+    auth_client: TestClient, db: FakeSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A database failure while saving the reply ends the stream properly.
+
+    By this point the 200 and every token are already on the wire, so there is
+    no status code left to turn into a 503. An exception escaping here would
+    truncate the body and the frontend would be left with a bubble that never
+    finishes. The stream says what happened instead, and keeps the text.
+    """
+    chat = db.seed(make_chat())
+    fake_groq_stream(monkeypatch, ["All ", "done."])
+    fail_saving_the_assistant_turn(
+        monkeypatch, OperationalError("INSERT", {}, Exception("server closed"))
+    )
+
+    response = auth_client.post(
+        "/chats/{}/messages".format(chat.id), json={"content": "Anything?"}
+    )
+
+    assert response.status_code == 200
+    events = parse_sse(response.text)
+    assert [event["type"] for event in events] == ["start", "token", "token", "error"]
+    error = events[-1]
+    assert error["content"] == "All done."
+    assert error["partial"] is True
+    assert error["message_id"] == events[0]["message_id"]
+    assert [m for m in db.rows(ChatMessage) if m.role == "assistant"] == []
+
+
+def test_post_message_survives_a_failed_save_after_a_failed_stream(
+    auth_client: TestClient, db: FakeSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both halves failing is still one error event, not a broken connection."""
+    chat = db.seed(make_chat())
+    fake_groq_stream(monkeypatch, ["Half ", "a reply", " never sent"], fail_after=2)
+    fail_saving_the_assistant_turn(
+        monkeypatch, OperationalError("INSERT", {}, Exception("server closed"))
+    )
+
+    response = auth_client.post(
+        "/chats/{}/messages".format(chat.id), json={"content": "Tell me more"}
+    )
+
+    events = parse_sse(response.text)
+    assert [event["type"] for event in events] == ["start", "token", "token", "error"]
+    assert events[-1]["content"] == "Half a reply"
+    assert events[-1]["partial"] is True
 
 
 def test_post_message_reports_an_empty_reply_without_storing_it(

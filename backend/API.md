@@ -21,8 +21,30 @@ deleted, is a **404** -- never a 403, which would confirm it exists.
 | 401 | No usable token |
 | 404 | Not yours, deleted, or never existed |
 | 409 | The user has no profile yet (`Upload your resume first`) |
+| 413 | Request body over 11MB (`/profile/upload` refuses over 10MB with its own message) |
 | 422 | Request body failed validation, or the chat has no JD |
 | 502 | The model provider was unreachable or returned nothing usable |
+| 503 | Temporary: the database is unreachable, or a provider rate limit survived the fallback |
+| 500 | Unexpected. The body is always `{"detail": "Something went wrong"}` — the traceback is logged, never returned |
+
+`422` bodies carry a flattened sentence (`"title: String should have at least 1
+character"`), not pydantic's nested list, because the frontend renders `detail`
+straight into a toast.
+
+The two `503`s are distinguished by their message: `Database unavailable, please
+retry`, and a rate-limit message the frontend matches on to show "Taking a
+moment, retrying..." rather than a hard error.
+
+### Headers on every response
+
+| Header | Value |
+|---|---|
+| `X-Request-ID` | A uuid per request, echoed from the request when one is sent, present on errors too, and stamped on every log line. Exposed to the browser via CORS |
+| `X-Content-Type-Options` | `nosniff` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `X-Frame-Options` / `Content-Security-Policy` | `DENY` / `frame-ancestors 'none'` |
+
+No HSTS: Render terminates TLS in front of the app.
 
 ### Provider fallback
 
@@ -49,7 +71,21 @@ first.
 
 ### `GET /health`
 
-Unauthenticated. `200 {"status": "ok"}`.
+Unauthenticated.
+
+```json
+{ "status": "ok", "db": "ok", "version": "5ce180c" }
+```
+
+| Field | Notes |
+|---|---|
+| `status` | Always `"ok"` while the process is answering. Liveness, not readiness |
+| `db` | `"ok"` or `"error"` — a `SELECT 1` with a two-second ceiling that never raises |
+| `version` | Short git sha of the running build, or `"dev"` |
+
+The status code stays `200` even when `db` is `"error"`: a 5xx here would have
+Render recycle a healthy instance over a database blip, and turn the frontend's
+connection pill red for a backend that is up.
 
 ---
 
@@ -318,7 +354,14 @@ data: {"type":"done","message_id":"7c9e...","content":"Your Python experience fi
 | `start` | `message_id`, `kind` | The assistant message's id, chosen up front, and the detected intent. Render an empty bubble and stream into it. |
 | `token` | `content` | One chunk. Append it; chunks are not line- or word-aligned. |
 | `done` | `message_id`, `content`, `provider`, (`output_id`, `resume_type`) | The full text. The message is persisted at this point. `provider` is `"groq"` or `"azure"` -- which model actually served the reply, known only once the stream has run, which is why it cannot be on `start`. For an output `kind` the event also carries `output_id`, and for `resume` the tracker's new `resume_type`. The stream closes. |
-| `error` | `message`, `message_id`, `partial`, `content` | Generation failed. `partial: true` means `content` did stream and **has been persisted** under `message_id` -- leave it on screen and offer a retry. `partial: false` means nothing was stored. |
+| `error` | `message`, `message_id`, `partial`, `content` | Generation or persistence failed. `partial: true` means `content` did stream -- leave it on screen and offer a retry. `partial: false` means nothing was generated and nothing was stored. |
+
+A database failure while saving the finished reply is reported as an `error`
+event too, not as a truncated response: by then the `200` and every token are
+already on the wire, so there is no status code left to turn into a `503`. The
+event carries the full text with `partial: true` and a message saying the reply
+could not be saved -- the one case where `partial: true` does **not** mean the
+text was persisted.
 
 The user message is persisted before the stream opens, so it survives a failure.
 The assistant message is persisted on `done`, or on `error` when anything

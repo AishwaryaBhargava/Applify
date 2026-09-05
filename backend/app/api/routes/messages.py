@@ -25,6 +25,12 @@ Whatever streamed before a failure is persisted, and the ``error`` event names
 the same ``message_id`` with ``partial: true``, so the frontend can leave the
 partial text on screen and offer a retry rather than losing it.
 
+A database failure while *saving* a finished reply is reported the same way.
+Once the ``start`` event is on the wire the 200 is committed and there is no
+status code left to turn into a 503, so an exception escaping here would
+truncate the response and leave a bubble that never finishes. It becomes an
+``error`` event carrying the full text instead.
+
 :func:`open_token_stream` and :func:`assistant_event_stream` are the two halves
 this module exports to ``routes.outputs``. The explicit-button path posts a
 different user message but must produce byte-identical SSE, so it reuses both
@@ -70,6 +76,12 @@ SSE_HEADERS = {
 EMPTY_MESSAGE = "A message cannot be empty."
 STREAM_FAILED = "The assistant could not finish this reply. Please try again."
 EMPTY_REPLY = "The assistant returned an empty reply. Please try again."
+# The reply generated fine and the database refused to keep it. Said plainly,
+# because the text is on screen and the user is about to lose it on a refresh.
+SAVE_FAILED = (
+    "The reply was generated but could not be saved. Copy anything you need "
+    "before retrying."
+)
 
 
 def sse_event(payload: dict[str, Any]) -> str:
@@ -148,6 +160,51 @@ def stream_provider(kind: str, state: dict[str, Any] | None) -> str | None:
     return llm.provider_of(source)
 
 
+async def persist_or_report(
+    save: Any,
+    *,
+    chat_id: uuid.UUID,
+    message_id: uuid.UUID,
+    text: str,
+) -> tuple[Any, str | None]:
+    """Run one persistence step, converting a database failure into an event.
+
+    By the time the reply is being saved the response is long since committed:
+    the 200 went out with the ``start`` event, and there is no status code left
+    to turn into a 503. A ``DBAPIError`` escaping here would abort the response
+    mid-stream and the frontend would see a truncated body with no explanation,
+    losing text the user watched arrive.
+
+    So the failure is reported the same way a generation failure is -- an
+    ``error`` event naming the message, with the full text attached so the
+    frontend can leave it on screen.
+
+    Args:
+        save: A zero-argument callable performing the write.
+        chat_id: The chat being answered, for the log line.
+        message_id: The assistant message the error event refers to.
+        text: The reply that was generated, echoed back on failure.
+
+    Returns:
+        ``(result, None)`` when the write succeeded, ``(None, event)`` when it
+        failed, where ``event`` is the rendered SSE error event to yield.
+    """
+    try:
+        return await run_in_threadpool(save), None
+    except Exception:  # noqa: BLE001 - reported to the client as an error event
+        logger.exception("Persisting the assistant reply failed for chat %s", chat_id)
+        event = sse_event(
+            {
+                "type": "error",
+                "message": SAVE_FAILED,
+                "message_id": str(message_id),
+                "partial": True,
+                "content": text,
+            }
+        )
+        return None, event
+
+
 async def assistant_event_stream(
     db: Session,
     chat_id: uuid.UUID,
@@ -193,20 +250,29 @@ async def assistant_event_stream(
     except Exception:  # noqa: BLE001 - reported to the client as an error event
         logger.exception("Streaming reply failed for chat %s", chat_id)
         text = "".join(parts)
+        saved = True
         if text:
-            await run_in_threadpool(
-                chat_service.save_message,
-                db,
-                chat_id,
-                "assistant",
-                text,
-                kind,
-                message_id,
-            )
+            try:
+                await run_in_threadpool(
+                    chat_service.save_message,
+                    db,
+                    chat_id,
+                    "assistant",
+                    text,
+                    kind,
+                    message_id,
+                )
+            except Exception:  # noqa: BLE001 - the stream already failed
+                # Two failures in a row, and the second one changes nothing the
+                # client can act on: the partial text is still worth showing.
+                logger.exception(
+                    "Persisting the partial reply failed for chat %s", chat_id
+                )
+                saved = False
         yield sse_event(
             {
                 "type": "error",
-                "message": STREAM_FAILED,
+                "message": STREAM_FAILED if saved else SAVE_FAILED,
                 "message_id": str(message_id),
                 "partial": bool(text),
                 "content": text,
@@ -238,9 +304,18 @@ async def assistant_event_stream(
         done["provider"] = provider
 
     if kind in chat_service.OUTPUT_INTENTS:
-        _, output, entry = await run_in_threadpool(
-            output_service.save_output_turn, db, chat_id, kind, text, message_id
+        result, failure = await persist_or_report(
+            lambda: output_service.save_output_turn(
+                db, chat_id, kind, text, message_id
+            ),
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
         )
+        if failure is not None:
+            yield failure
+            return
+        _, output, entry = result
         done["output_id"] = str(output.id)
         if kind == chat_service.INTENT_RESUME:
             done["resume_type"] = (
@@ -249,15 +324,17 @@ async def assistant_event_stream(
                 else output_service.RESUME_TYPE_TAILORED
             )
     else:
-        await run_in_threadpool(
-            chat_service.save_message,
-            db,
-            chat_id,
-            "assistant",
-            text,
-            kind,
-            message_id,
+        _, failure = await persist_or_report(
+            lambda: chat_service.save_message(
+                db, chat_id, "assistant", text, kind, message_id
+            ),
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
         )
+        if failure is not None:
+            yield failure
+            return
 
     yield sse_event(done)
 

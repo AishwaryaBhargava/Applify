@@ -12,6 +12,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 
+from app.api.routes import health as health_route
 from app.core.config import settings
 from app.data.deps import get_db
 from app.main import app
@@ -26,14 +27,45 @@ USER_ID = "11111111-2222-3333-4444-555555555555"
 # --- /health ---------------------------------------------------------------
 
 
-def test_health_returns_ok(client: TestClient) -> None:
-    """GET /health is unprotected and returns {"status": "ok"}."""
+@pytest.fixture
+def database_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report the database as reachable without opening a connection.
+
+    The suite runs offline, and a health check that actually dialled Postgres
+    would make these tests pass or fail on whether Docker happens to be up.
+    """
+    monkeypatch.setattr(health_route, "check_database", lambda: True)
+
+
+def test_health_returns_ok(client: TestClient, database_reachable: None) -> None:
+    """GET /health is unprotected and reports liveness, the database, and the build."""
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["db"] == "ok"
+    assert body["version"]
 
 
-def test_health_needs_no_auth(client: TestClient) -> None:
+def test_health_reports_an_unreachable_database_without_failing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dead database is db: "error" with a 200, never a 5xx.
+
+    The status code is what Render recycles an instance on, so a database blip
+    must not read as "this process is broken".
+    """
+    monkeypatch.setattr(health_route, "check_database", lambda: False)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["db"] == "error"
+
+
+def test_health_needs_no_auth(client: TestClient, database_reachable: None) -> None:
     """GET /health is the only route that works without an Authorization header."""
     assert client.get("/health").status_code == 200
 

@@ -60,7 +60,7 @@ cd applify
 
 ```bash
 cd backend
-python -m venv venv
+py -3.11 -m venv venv          # macOS/Linux: python3.11 -m venv venv
 source venv/bin/activate       # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -77,8 +77,18 @@ Backend runs at http://localhost:8000. Confirm with:
 
 ```bash
 curl http://localhost:8000/health
-# { "status": "ok" }
+# { "status": "ok", "db": "ok", "version": "5ce180c" }
 ```
+
+`status` is liveness and stays `ok` for as long as the process is answering.
+`db` is a `SELECT 1` with a two-second ceiling, so an unreachable database
+reads as `"db": "error"` on a 200 rather than as a failed request — Render must
+not recycle a healthy instance over a database blip. `version` is the running
+build's short git sha, or `dev` when there is no git metadata.
+
+Python 3.11 is not incidental: it is the version Render runs, pinned in
+`backend/.python-version` and in `render.yaml` as `PYTHON_VERSION`, so the
+local environment matches the deployed one.
 
 ### 3. Frontend setup
 
@@ -115,7 +125,13 @@ SUPABASE_DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<dbname>
 SUPABASE_JWT_SECRET=<your-supabase-jwt-secret>
 SUPABASE_URL=https://<your-project>.supabase.co
 ALLOWED_ORIGINS=http://localhost:5173
+LOG_LEVEL=INFO
 ```
+
+`ALLOWED_ORIGINS` is compared against the browser's `Origin` header by exact
+string, so a trailing slash or a missing scheme would match nothing and block
+the frontend with no server-side error to read. Both are corrected at startup
+and the correction is logged.
 
 ### Frontend (`frontend/.env`)
 
@@ -166,7 +182,7 @@ Then apply the schema: `cd backend && alembic upgrade head`.
 ### Cloud project (deployment)
 
 1. Go to [supabase.com](https://supabase.com) and create a new project
-2. From Project Settings, copy the database connection string (Session mode, port 5432) and add it as `SUPABASE_DATABASE_URL`
+2. From Project Settings, copy the database connection string (**Session mode, port 5432**) and add it as `SUPABASE_DATABASE_URL`. The Transaction-mode pooler on port **6543** will not work: it multiplexes one server connection across clients, which breaks the server-side prepared statements SQLAlchemy's psycopg2 driver issues, and it does not support the `SET` statements a migration runs. The backend adds `sslmode=require` automatically for any host that is not loopback, so the URL needs no query string
 3. From Project Settings > API, copy the `anon` key and add it as `VITE_SUPABASE_ANON_KEY`
 4. From Project Settings > API, copy the JWT secret and add it as `SUPABASE_JWT_SECRET`, and the project URL as `SUPABASE_URL` (the backend verifies tokens against the project JWKS first and falls back to the shared secret)
 5. From Project Settings > Auth, enable Google OAuth if you want Google login (requires a Google Cloud OAuth client)
@@ -189,6 +205,60 @@ Then apply the schema: `cd backend && alembic upgrade head`.
 1. Go to [console.groq.com](https://console.groq.com) and create an account
 2. Generate an API key and add it as `GROQ_API_KEY`
 3. No model deployment needed — Groq hosts `openai/gpt-oss-120b` directly. Set `GROQ_MODEL` if you want a different model; `llama-3.3-70b-versatile` from the original plan has been decommissioned by Groq.
+
+---
+
+## Deployment
+
+### Backend — Render
+
+`backend/render.yaml` is a Blueprint describing the whole service: Python 3.11.9,
+`pip install -r requirements.txt`, a start command of
+`alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT`, and
+`/health` as the health check path. Every secret in it is `sync: false`, so
+Render prompts for the values on the first deploy and none of them live in git.
+
+Render reads `render.yaml` from the **repository root**, so either move or
+symlink the file there, or create the Web Service from the dashboard and copy
+the settings across by hand.
+
+Two details are easy to get wrong:
+
+- **Python version.** Render's Python runtime is pinned by the `PYTHON_VERSION`
+  environment variable (`3.11.9` in the Blueprint), which must stay in step with
+  `backend/.python-version`.
+- **`$PORT`.** Render assigns the port at run time. Nothing in the application
+  reads it — uvicorn takes it on the command line, which is why the start
+  command must keep `--host 0.0.0.0 --port $PORT`.
+
+Migrations run as part of the start command because the free tier has no
+separate release phase. The `&&` is deliberate: a failed migration stops the
+deploy rather than booting the app against an old schema.
+
+`backend/Dockerfile` is the alternative for any host that takes an image
+(`python:3.11-slim`, non-root, same start command).
+
+### Frontend — Vercel
+
+Connect the repo, set `VITE_API_URL` to the Render URL and the two
+`VITE_SUPABASE_*` values in the Vercel dashboard.
+
+### Production checklist
+
+- [ ] `ALLOWED_ORIGINS` on Render is the Vercel URL (`https://<app>.vercel.app`),
+      not `localhost` — without it every browser call fails CORS
+- [ ] `SUPABASE_DATABASE_URL`, `SUPABASE_URL`, and `SUPABASE_JWT_SECRET` point at
+      the **cloud** project, and the database URL is the Session-mode pooler
+      (port 5432, not 6543)
+- [ ] `AZURE_OPENAI_*` and `GROQ_API_KEY` are set — a missing key disables the
+      provider fallback that covers the other one's rate limits
+- [ ] Migrations have run: `alembic upgrade head` (the start command does this,
+      so check the deploy log rather than assuming)
+- [ ] `GET https://<render-url>/health` returns `"db": "ok"` — `"error"` means
+      the app is up and cannot reach Postgres, usually a wrong pooler port or a
+      password that was never URL-encoded
+- [ ] `VITE_API_URL` on Vercel is the Render URL, and a request from the live
+      frontend comes back with an `X-Request-ID` header
 
 ---
 

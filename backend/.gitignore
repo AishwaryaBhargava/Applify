@@ -1,8 +1,11 @@
 # Environment
 .env
 
-# Virtual environment
+# Virtual environments
+# venv/ is the 3.10 environment the local server runs on; venv311/ is the
+# Python 3.11 environment that matches Render.
 venv/
+venv311/
 .venv/
 
 # Python

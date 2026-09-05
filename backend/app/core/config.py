@@ -14,6 +14,71 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # backend/app/core/config.py -> backend/
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 
+# Hosts that are never reachable over TLS, so a Postgres URL pointing at one is
+# connected to without SSL. Everything else -- a Supabase cloud project above
+# all -- gets ``sslmode=require``.
+LOCAL_DB_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"})
+
+# Origins whose scheme, when ALLOWED_ORIGINS omits it, is http rather than https.
+LOCAL_ORIGIN_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def normalise_origin(value: str) -> str:
+    """Return one ALLOWED_ORIGINS entry in the exact form CORS compares against.
+
+    Starlette matches ``Origin`` headers against this list by string equality,
+    so ``https://applify.vercel.app/`` with its trailing slash silently matches
+    nothing, and a bare ``applify.vercel.app`` matches nothing either. Both are
+    easy to type into a dashboard and impossible to debug from the browser
+    error, so they are corrected here rather than trusted.
+
+    Args:
+        value: One comma-separated entry from ``ALLOWED_ORIGINS``.
+
+    Returns:
+        The origin as ``scheme://host[:port]``: lower-cased, trailing slashes
+        and any path removed, and a scheme added when one is missing (``http``
+        for a loopback host, ``https`` for anything else). ``*`` is returned
+        unchanged.
+    """
+    origin = value.strip()
+    if not origin or origin == "*":
+        return origin
+
+    origin = origin.rstrip("/")
+    if "://" in origin:
+        scheme, _, remainder = origin.partition("://")
+        origin = "{}://{}".format(scheme.lower(), remainder)
+    else:
+        host = origin.split(":", 1)[0].split("/", 1)[0].lower()
+        scheme = "http" if host in LOCAL_ORIGIN_HOSTS else "https"
+        origin = "{}://{}".format(scheme, origin)
+
+    # Drop any path that was pasted along with the origin: CORS compares the
+    # scheme, host, and port only.
+    scheme, _, remainder = origin.partition("://")
+    remainder = remainder.split("/", 1)[0]
+    return "{}://{}".format(scheme.lower(), remainder.lower())
+
+
+def is_local_database(url: str) -> bool:
+    """Return True when a Postgres URL points at a host on this machine.
+
+    Used to decide whether ``sslmode=require`` applies: the local Supabase
+    stack serves plain TCP and refuses an SSL handshake, while every hosted
+    Postgres expects one.
+    """
+    if not url:
+        return True
+    remainder = url.partition("://")[2]
+    authority = remainder.split("/", 1)[0].split("?", 1)[0]
+    host_port = authority.rpartition("@")[2]
+    if host_port.startswith("["):
+        host = host_port.partition("]")[0] + "]"
+    else:
+        host = host_port.split(":", 1)[0]
+    return host.lower() in LOCAL_DB_HOSTS
+
 
 class Settings(BaseSettings):
     """All backend environment variables, validated at import time."""
@@ -65,6 +130,15 @@ class Settings(BaseSettings):
         default="http://localhost:5173", alias="ALLOWED_ORIGINS"
     )
 
+    # --- Runtime / observability ---
+    # Root log level. DEBUG locally when something needs tracing; INFO on
+    # Render, where every line costs log retention.
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    # Reported by GET /health so a deployed build can be identified. Render
+    # sets RENDER_GIT_COMMIT itself; APP_VERSION overrides it anywhere else.
+    app_version_override: str = Field(default="", alias="APP_VERSION")
+    render_git_commit: str = Field(default="", alias="RENDER_GIT_COMMIT")
+
     # --- JWT verification ---
     # utils/auth.py picks its strategy per token: a token carrying a `kid` is
     # verified against the project's JWKS (ES256/RS256 signing keys), one
@@ -74,12 +148,53 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def allowed_origins(self) -> list[str]:
-        """ALLOWED_ORIGINS parsed into a list of origins."""
-        return [
-            origin.strip()
-            for origin in self.allowed_origins_raw.split(",")
-            if origin.strip()
-        ]
+        """ALLOWED_ORIGINS parsed, normalised, and de-duplicated.
+
+        Normalisation is not cosmetic: Starlette compares the browser's
+        ``Origin`` header against these strings exactly, so a stray trailing
+        slash or a missing scheme in the Render dashboard would block the
+        frontend with no server-side error to read.
+        """
+        seen: dict[str, None] = {}
+        for raw in self.allowed_origins_raw.split(","):
+            origin = normalise_origin(raw)
+            if origin:
+                seen.setdefault(origin, None)
+        return list(seen)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def origin_corrections(self) -> list[tuple[str, str]]:
+        """``(as configured, as used)`` for every entry normalisation changed.
+
+        Logged once at startup so a corrected origin is visible rather than
+        silently different from what the dashboard says.
+        """
+        corrections: list[tuple[str, str]] = []
+        for raw in self.allowed_origins_raw.split(","):
+            entry = raw.strip()
+            if not entry:
+                continue
+            normalised = normalise_origin(entry)
+            if normalised != entry:
+                corrections.append((entry, normalised))
+        return corrections
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def database_is_local(self) -> bool:
+        """True when SUPABASE_DATABASE_URL points at this machine.
+
+        The local Supabase stack speaks plain TCP; every hosted Postgres wants
+        TLS. This is the switch between the two.
+        """
+        return is_local_database(self.supabase_database_url)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def version(self) -> str:
+        """The build identifier reported by ``GET /health``."""
+        return self.app_version_override or self.render_git_commit or ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property

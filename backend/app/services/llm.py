@@ -181,6 +181,20 @@ def is_daily_cap(exc: BaseException) -> bool:
     return any(marker in text for marker in DAILY_CAP_MARKERS)
 
 
+def is_rate_limit_error(exc: BaseException) -> bool:
+    """Return True when a failure is specifically a provider rate limit.
+
+    Narrower than :func:`is_quota_or_availability_error`, which also covers
+    5xx and connection failures. Used by the API's error handler to decide
+    whether a request that survived fallback should be reported as "the
+    providers are busy" rather than as a fault -- the frontend keys its
+    "Taking a moment, retrying..." copy off that distinction.
+    """
+    if _status_code(exc) == 429:
+        return True
+    return type(exc).__name__ == "RateLimitError"
+
+
 def is_quota_or_availability_error(exc: BaseException) -> bool:
     """Return True when a failure is the provider's fault, not the request's.
 
