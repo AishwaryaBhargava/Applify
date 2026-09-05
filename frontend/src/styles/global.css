@@ -65,3 +65,89 @@
     min-height: 100vh;
   }
 }
+
+@layer components {
+  /*
+   * Markdown rendered inside a chat bubble or an analysis narrative.
+   * react-markdown emits bare tags and Tailwind's preflight strips their
+   * defaults, so the rhythm has to be put back by hand. Scoped to `.md-body`
+   * so it can never leak into the rest of the app.
+   */
+  .md-body > :first-child {
+    margin-top: 0;
+  }
+
+  .md-body > :last-child {
+    margin-bottom: 0;
+  }
+
+  .md-body p,
+  .md-body ul,
+  .md-body ol,
+  .md-body blockquote,
+  .md-body pre,
+  .md-body table {
+    margin: 0.6em 0;
+  }
+
+  .md-body h1,
+  .md-body h2,
+  .md-body h3,
+  .md-body h4 {
+    @apply font-serif font-medium text-teal-ink;
+    margin: 0.9em 0 0.4em;
+    font-size: 1.08em;
+    line-height: 1.35;
+  }
+
+  .md-body ul {
+    @apply list-disc;
+    padding-left: 1.15em;
+  }
+
+  .md-body ol {
+    @apply list-decimal;
+    padding-left: 1.35em;
+  }
+
+  .md-body li {
+    margin: 0.2em 0;
+  }
+
+  .md-body strong {
+    @apply font-medium text-text-primary;
+  }
+
+  .md-body a {
+    @apply text-teal-deep underline underline-offset-2;
+  }
+
+  .md-body code {
+    @apply rounded-badge bg-card px-1 py-[1px] text-[0.92em];
+  }
+
+  .md-body pre {
+    @apply overflow-x-auto rounded-input bg-card p-3 text-[0.92em];
+  }
+
+  .md-body pre code {
+    @apply bg-transparent p-0;
+  }
+
+  .md-body blockquote {
+    @apply border-l-2 border-teal-soft pl-3 text-text-secondary;
+  }
+
+  .md-body hr {
+    @apply my-3 border-t border-border;
+  }
+
+  .md-body table {
+    @apply w-full border-collapse text-left;
+  }
+
+  .md-body th,
+  .md-body td {
+    @apply border-b border-border py-1.5 pr-3;
+  }
+}

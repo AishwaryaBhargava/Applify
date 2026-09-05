@@ -1,18 +1,16 @@
 import api from './api'
-import type { Analysis, ChatMessage, JobChat } from '../types'
+import type { ChatDetail, JobChat } from '../types'
 
 export interface ChatCreateRequest {
   title: string
-  company: string
-  jd_text: string
+  /** Optional on the backend; the new-chat modal still asks for it. */
+  company?: string | null
+  jd_text?: string | null
 }
 
-export interface ChatDetail extends JobChat {
-  messages: ChatMessage[]
-  analysis: Analysis | null
-}
+export type { ChatDetail }
 
-/** POST /chats — creates a chat and its tracker entry. */
+/** POST /chats — creates a chat and, in the same transaction, its tracker entry. */
 export async function createChat(payload: ChatCreateRequest): Promise<JobChat> {
   const { data } = await api.post<JobChat>('/chats', payload)
   return data

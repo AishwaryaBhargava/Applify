@@ -3,6 +3,10 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      // The sidebar becomes a slide-over below this width.
+      screens: {
+        nav: '900px',
+      },
       colors: {
         teal: {
           deep: '#0F6E56',

@@ -1,34 +1,65 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback } from 'react'
+import { useChatStore } from '../store/chatStore'
 
 export interface UseStreamResult {
-  content: string
+  /** Posts a user turn and streams the reply into the active chat. */
+  send: (content: string) => Promise<void>
+  /** Re-sends the last turn after a failed or stopped stream. */
+  retry: () => Promise<void>
+  /** Cancels the stream in flight, keeping whatever text arrived. */
+  abort: () => void
   isStreaming: boolean
-  error: string | null
-  start: (url: string, body?: unknown) => void
-  stop: () => void
+  /**
+   * Posted, but the server has not named the reply yet — the window where the
+   * thread shows a typing indicator with no bubble behind it.
+   */
+  isConnecting: boolean
+  /** True from the `start` frame until the first token lands. */
+  isAwaitingFirstToken: boolean
+  /** The partial text currently being streamed, or ''. */
+  streamingContent: string
 }
 
 /**
- * Handles SSE streaming of AI responses from the backend.
- * TODO(Phase 6): open the connection, append tokens to chatStore, and clean up
- * on unmount or when the user navigates away.
+ * The chat page's handle on the SSE stream.
+ *
+ * The transport lives in `services/messages.streamMessage` and the state
+ * transitions live in `chatStore` — token appends, the final replace, and the
+ * errored-with-partial-text state that puts a Retry in front of the user. This
+ * hook is the thin component-facing surface over the two, so a component never
+ * touches an AbortController or an SSE frame.
  */
 export function useStream(): UseStreamResult {
-  const [content] = useState('')
-  const [isStreaming] = useState(false)
-  const [error] = useState<string | null>(null)
-  const controllerRef = useRef<AbortController | null>(null)
+  const sendMessage = useChatStore((state) => state.sendMessage)
+  const retryLast = useChatStore((state) => state.retryLast)
+  const abortStream = useChatStore((state) => state.abortStream)
+  const isStreaming = useChatStore((state) => state.isStreaming)
+  const streamingMessageId = useChatStore((state) => state.streamingMessageId)
+  const streamingContent = useChatStore(
+    (state) =>
+      state.messages.find((message) => message.id === state.streamingMessageId)
+        ?.content ?? '',
+  )
 
-  const start = useCallback((_url: string, _body?: unknown) => {
-    // TODO(Phase 6): fetch the SSE endpoint and read the response stream.
-  }, [])
+  const send = useCallback(
+    (content: string) => sendMessage(content),
+    [sendMessage],
+  )
+  const retry = useCallback(() => retryLast(), [retryLast])
+  const abort = useCallback(() => abortStream(), [abortStream])
 
-  const stop = useCallback(() => {
-    controllerRef.current?.abort()
-    controllerRef.current = null
-  }, [])
-
-  return { content, isStreaming, error, start, stop }
+  return {
+    send,
+    retry,
+    abort,
+    isStreaming,
+    isConnecting: isStreaming && !streamingMessageId,
+    // Between POST and the `start` frame there is no message id yet; between
+    // `start` and the first token the bubble exists but is still empty.
+    isAwaitingFirstToken:
+      isStreaming && (!streamingMessageId || streamingContent.length === 0),
+    streamingContent,
+  }
 }
 
 export default useStream

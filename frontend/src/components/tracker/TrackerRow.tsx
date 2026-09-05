@@ -17,11 +17,11 @@ export default function TrackerRow({ entry, onStatusChange }: TrackerRowProps) {
           to={`/chat/${entry.chat_id}`}
           className="font-medium text-teal-ink hover:underline"
         >
-          {entry.title}
+          {entry.title ?? 'Untitled role'}
         </Link>
       </td>
       <td className="px-4 py-3 text-[13px] text-text-secondary">
-        {entry.company}
+        {entry.company ?? '—'}
       </td>
       <td className="px-4 py-3 text-[12px] text-text-muted">
         {entry.created_at}
@@ -30,8 +30,8 @@ export default function TrackerRow({ entry, onStatusChange }: TrackerRowProps) {
         {entry.analysis_type ?? '—'}
       </td>
       <td className="px-4 py-3">
-        <Badge tone={entry.resume_type === 'ai_tailored' ? 'teal' : 'neutral'}>
-          {entry.resume_type === 'ai_tailored' ? 'AI-Tailored' : 'Unaltered'}
+        <Badge tone={entry.resume_type === 'unaltered' ? 'neutral' : 'teal'}>
+          {entry.resume_type === 'unaltered' ? 'Unaltered' : 'AI-Tailored'}
         </Badge>
       </td>
       <td className="px-4 py-3">

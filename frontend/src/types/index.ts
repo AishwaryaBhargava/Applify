@@ -103,56 +103,151 @@ export interface ProfileGapsResponse {
 /* Job chats and messages                                              */
 /* ------------------------------------------------------------------ */
 
+/** The two analysis depths. Mirrors `AnalysisType` in schemas/analysis.py. */
 export type AnalysisType = 'quick' | 'detailed'
 
+/**
+ * A job chat as the sidebar and the chat page see it.
+ * Mirrors `ChatResponse` in backend/app/api/schemas/chats.py.
+ *
+ * `company` and `jd_text` are nullable: the backend accepts a chat created
+ * from a title alone. `has_analysis` and `resume_type` are computed by the
+ * route (from the analysis table and the chat's tracker entry) so the sidebar
+ * never has to fan out to /tracker just to draw a row.
+ */
 export interface JobChat {
   id: string
-  user_id: string
   title: string
-  company: string
-  jd_text: string
+  company: string | null
+  jd_text: string | null
+  /** null until an analysis has been run, then the depth that ran. */
   analysis_type: AnalysisType | null
   created_at: string
+  has_analysis: boolean
+  resume_type: ResumeType
 }
 
 export type ChatRole = 'user' | 'assistant' | 'system'
 
+/**
+ * What produced a message. `chat` is an ordinary turn, `analysis` is the
+ * rendered fit analysis, and the rest are generated documents (Phase 7).
+ * Mirrors `MESSAGE_KINDS` in backend/app/api/schemas/messages.py.
+ */
+export type MessageKind = 'chat' | 'analysis' | 'resume' | 'cover_letter' | 'answer'
+
+/** Mirrors `MessageResponse` in backend/app/api/schemas/messages.py. */
 export interface ChatMessage {
   id: string
   chat_id: string
   role: ChatRole
   content: string
+  kind: MessageKind
   created_at: string
 }
+
+/**
+ * A message as the thread renders it. The two extra flags are client-only and
+ * never come from the server: `pending` marks the assistant bubble that is
+ * still streaming, `errored` marks one whose stream failed or was stopped so
+ * the bubble can offer a retry alongside whatever text did arrive.
+ */
+export interface ThreadMessage extends ChatMessage {
+  pending?: boolean
+  errored?: boolean
+  errorMessage?: string
+}
+
+/** Body of GET /chats/{id} — everything needed to rebuild the page. */
+export interface ChatDetail extends JobChat {
+  messages: ChatMessage[]
+  analysis: Analysis | null
+}
+
+/* ------------------------------------------------------------------ */
+/* Streaming (POST /chats/{id}/messages, text/event-stream)            */
+/* ------------------------------------------------------------------ */
+
+/** First frame: names the message id the tokens belong to and its kind. */
+export interface StreamStartEvent {
+  type: 'start'
+  message_id: string
+  kind: MessageKind
+}
+
+/** One chunk of assistant text. */
+export interface StreamTokenEvent {
+  type: 'token'
+  content: string
+}
+
+/** Final frame on success: the full text as it was persisted. */
+export interface StreamDoneEvent {
+  type: 'done'
+  message_id: string
+  content: string
+}
+
+/**
+ * Final frame on failure. The backend persists whatever streamed before the
+ * failure and reports it back in `content`, so the thread can show the partial
+ * answer rather than dropping it.
+ */
+export interface StreamErrorEvent {
+  type: 'error'
+  message: string
+  message_id?: string
+  partial?: boolean
+  content?: string
+}
+
+export type StreamEvent =
+  | StreamStartEvent
+  | StreamTokenEvent
+  | StreamDoneEvent
+  | StreamErrorEvent
 
 /* ------------------------------------------------------------------ */
 /* Analysis                                                            */
 /* ------------------------------------------------------------------ */
 
-export interface QuickSnapshot {
-  fit_score: number
-  strengths: string[]
-  gaps: string[]
-  verdict: string
-}
-
-export interface SkillComparison {
+/**
+ * One skill compared between the JD and the profile, from a detailed
+ * breakdown. Mirrors `SkillAssessment` in schemas/analysis.py.
+ */
+export interface DetailedSkill {
   skill: string
-  required: boolean
-  matched: boolean
-  reasoning: string
-  suggestion?: string
+  required_by_jd: boolean
+  user_has: boolean
+  /** What in the profile backs this up. Empty when the user does not have it. */
+  evidence: string
+  /** Why the gap matters, when there is one. */
+  gap_reasoning: string
+  /** What the user could do about it. */
+  suggestion: string
 }
 
-export interface DetailedBreakdown {
-  fit_score: number
-  narrative: string
-  skill_comparison: SkillComparison[]
-  strengths: string[]
-  gaps: string[]
-  verdict: string
+/**
+ * The depth-specific payload. A quick snapshot carries only the four summary
+ * fields; a detailed breakdown adds `skills` and `narrative`. Every field is
+ * optional so a payload from a newer backend still renders rather than
+ * throwing, and the index signature keeps unknown keys addressable.
+ */
+export interface AnalysisFullJson {
+  fit_score?: number
+  strengths?: string[]
+  gaps?: string[]
+  verdict?: string
+  skills?: DetailedSkill[]
+  narrative?: string
+  [key: string]: unknown
 }
 
+/**
+ * A stored analysis. `fit_score`, `strengths`, `gaps` and `verdict` are the
+ * summary — the same four fields whichever depth ran, so the card renders
+ * identically. Mirrors `AnalysisResponse` in schemas/analysis.py.
+ */
 export interface Analysis {
   id: string
   chat_id: string
@@ -161,7 +256,7 @@ export interface Analysis {
   strengths: string[]
   gaps: string[]
   verdict: string
-  full_json: QuickSnapshot | DetailedBreakdown | null
+  full_json: AnalysisFullJson
   created_at: string
 }
 
@@ -176,15 +271,18 @@ export type TrackerStatus =
   | 'offer'
   | 'rejected'
 
-export type ResumeType = 'unaltered' | 'ai_tailored'
+/** Mirrors `ResumeType` in backend/app/api/schemas/tracker.py. */
+export type ResumeType = 'unaltered' | 'tailored'
 
 export interface TrackerEntry {
   id: string
   chat_id: string
-  user_id: string
-  title: string
-  company: string
-  analysis_type: AnalysisType | null
+  /** Absent on the optimistic entry the sidebar creates alongside a chat. */
+  user_id?: string
+  title: string | null
+  company: string | null
+  /** Denormalised for the Phase 8 table; not sent by GET /tracker today. */
+  analysis_type?: AnalysisType | null
   status: TrackerStatus
   resume_type: ResumeType
   created_at: string

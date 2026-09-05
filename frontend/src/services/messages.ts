@@ -1,29 +1,215 @@
 import api from './api'
-import type { ChatMessage } from '../types'
+import { supabase } from '../lib/supabase'
+import type {
+  ChatMessage,
+  StreamDoneEvent,
+  StreamErrorEvent,
+  StreamEvent,
+  StreamStartEvent,
+} from '../types'
 
-/** GET /chats/{id}/messages — full message history for a chat. */
+const baseURL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+
+/** Absolute URL of the SSE endpoint consumed by `streamMessage`. */
+export function messageStreamUrl(chatId: string): string {
+  return `${baseURL}/chats/${chatId}/messages`
+}
+
+/** GET /chats/{id}/messages — full message history, oldest first. */
 export async function listMessages(chatId: string): Promise<ChatMessage[]> {
   const { data } = await api.get<ChatMessage[]>(`/chats/${chatId}/messages`)
   return data
 }
 
-/**
- * POST /chats/{id}/messages — sends a user message.
- * The response is streamed via SSE in Phase 6; this non-streaming helper
- * exists so the service surface matches the documented endpoints.
- */
-export async function sendMessage(
-  chatId: string,
-  content: string,
-): Promise<ChatMessage> {
-  const { data } = await api.post<ChatMessage>(`/chats/${chatId}/messages`, {
-    content,
-  })
-  return data
+export interface StreamHandlers {
+  onStart?: (event: StreamStartEvent) => void
+  onToken?: (text: string) => void
+  onDone?: (event: StreamDoneEvent) => void
+  /** Called once for a stream that failed, was rejected, or dropped. */
+  onError?: (event: StreamErrorEvent) => void
 }
 
-/** Absolute URL of the SSE endpoint consumed by useStream. */
-export function messageStreamUrl(chatId: string): string {
-  const base = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
-  return `${base}/chats/${chatId}/messages`
+/** Frames are separated by a blank line; CRLF is tolerated. */
+const FRAME_SEPARATOR = /\r?\n\r?\n/
+
+/** Current Supabase access token, or null when there is no session. */
+async function accessToken(): Promise<string | null> {
+  try {
+    const { data } = await supabase.auth.getSession()
+    return data.session?.access_token ?? null
+  } catch {
+    // Supabase unreachable: send the request unauthenticated and let the
+    // backend answer 401, exactly as the Axios interceptor does.
+    return null
+  }
+}
+
+/**
+ * Parses one SSE frame into an event, or null if there is nothing to act on.
+ *
+ * A frame is a block of lines. Only `data:` lines carry payload; comments
+ * (`:heartbeat`) and any `event:` / `id:` fields are ignored, and multiple
+ * `data:` lines in one frame are joined with newlines per the SSE spec. The
+ * backend sends one JSON object per frame on a single `data:` line — newlines
+ * inside token text arrive escaped by `json.dumps`, so they never split a
+ * frame — but the multi-line join keeps this correct if that ever changes.
+ */
+function parseFrame(raw: string): StreamEvent | null {
+  const payload = raw
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).replace(/^ /, ''))
+    .join('\n')
+
+  if (!payload || payload === '[DONE]') return null
+
+  try {
+    const parsed: unknown = JSON.parse(payload)
+    if (parsed && typeof parsed === 'object' && 'type' in parsed) {
+      return parsed as StreamEvent
+    }
+  } catch {
+    // A truncated or non-JSON frame is dropped rather than killing the stream.
+  }
+  return null
+}
+
+/** Best-effort `detail` from a non-2xx response body. */
+async function errorDetail(response: Response, fallback: string): Promise<string> {
+  try {
+    const body: unknown = await response.json()
+    const detail = (body as { detail?: unknown } | null)?.detail
+    if (typeof detail === 'string' && detail.trim()) return detail
+  } catch {
+    // Empty or non-JSON body: fall through to the generic message.
+  }
+  return fallback
+}
+
+/**
+ * POST /chats/{id}/messages and consume the SSE reply.
+ *
+ * `EventSource` cannot be used here: it is GET-only and cannot carry an
+ * Authorization header. So this posts with `fetch`, reads `response.body` with
+ * a `ReadableStream` reader, and splits SSE frames by hand.
+ *
+ * Resolves when the stream ends. It never rejects: a rejected request, a
+ * transport failure mid-stream, and an abort all arrive through `onError`, so
+ * a caller has exactly one failure path to handle.
+ */
+export async function streamMessage(
+  chatId: string,
+  content: string,
+  handlers: StreamHandlers = {},
+  signal?: AbortSignal,
+): Promise<void> {
+  const token = await accessToken()
+
+  let response: Response
+  try {
+    response = await fetch(messageStreamUrl(chatId), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ content }),
+      signal,
+    })
+  } catch (error) {
+    handlers.onError?.({
+      type: 'error',
+      message:
+        (error as Error)?.name === 'AbortError'
+          ? 'Stopped.'
+          : 'Cannot reach the Applify server. Check your connection and try again.',
+    })
+    return
+  }
+
+  if (!response.ok) {
+    handlers.onError?.({
+      type: 'error',
+      message: await errorDetail(
+        response,
+        `The server could not answer that (${response.status}).`,
+      ),
+    })
+    return
+  }
+
+  if (!response.body) {
+    handlers.onError?.({
+      type: 'error',
+      message: 'This browser cannot read streamed responses.',
+    })
+    return
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  /** Drains every complete frame currently in the buffer. */
+  const drain = () => {
+    let match = FRAME_SEPARATOR.exec(buffer)
+    while (match !== null) {
+      const frame = buffer.slice(0, match.index)
+      buffer = buffer.slice(match.index + match[0].length)
+      const event = parseFrame(frame)
+      if (event) dispatch(event, handlers)
+      match = FRAME_SEPARATOR.exec(buffer)
+    }
+  }
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      drain()
+    }
+    // Flush any bytes the decoder was holding, then any frame the server sent
+    // without a trailing blank line.
+    buffer += decoder.decode()
+    drain()
+    const tail = parseFrame(buffer)
+    if (tail) dispatch(tail, handlers)
+  } catch (error) {
+    // Abort and a dropped connection land here identically; the caller keeps
+    // whatever tokens already arrived and offers a retry.
+    handlers.onError?.({
+      type: 'error',
+      message:
+        (error as Error)?.name === 'AbortError'
+          ? 'Stopped.'
+          : 'The connection dropped before the reply finished.',
+    })
+  } finally {
+    // Releasing the lock lets the browser tear the socket down after an abort.
+    try {
+      reader.releaseLock()
+    } catch {
+      // Already released by the abort; nothing to do.
+    }
+  }
+}
+
+/** Routes one parsed event to its handler. */
+function dispatch(event: StreamEvent, handlers: StreamHandlers): void {
+  switch (event.type) {
+    case 'start':
+      handlers.onStart?.(event)
+      break
+    case 'token':
+      handlers.onToken?.(event.content)
+      break
+    case 'done':
+      handlers.onDone?.(event)
+      break
+    case 'error':
+      handlers.onError?.(event)
+      break
+  }
 }
