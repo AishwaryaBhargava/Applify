@@ -4,6 +4,12 @@ import { Trash2 } from 'lucide-react'
 import ConfirmModal from '../common/ConfirmModal'
 import Spinner from '../common/Spinner'
 import NewChatButton from './NewChatButton'
+import useNavigationGuard, {
+  UNSAVED_DESCRIPTION,
+  UNSAVED_LEAVE_LABEL,
+  UNSAVED_STAY_LABEL,
+  UNSAVED_TITLE,
+} from '../../hooks/useNavigationGuard'
 import { useChatListStore } from '../../store/chatListStore'
 import { useUiStore } from '../../store/uiStore'
 import type { JobChat } from '../../types'
@@ -22,6 +28,9 @@ export default function ChatList() {
   const deleteChat = useChatListStore((state) => state.deleteChat)
   const closeSidebar = useUiStore((state) => state.closeSidebar)
   const [pendingDelete, setPendingDelete] = useState<JobChat | null>(null)
+  // A chat row is a way off the profile page too, so it asks about unsaved
+  // profile edits exactly as the primary nav does.
+  const guard = useNavigationGuard()
   const navigate = useNavigate()
   const { id: activeId } = useParams<{ id: string }>()
 
@@ -67,7 +76,12 @@ export default function ChatList() {
             <div key={chat.id} className="group relative">
               <NavLink
                 to={`/chat/${chat.id}`}
-                onClick={closeSidebar}
+                onClick={(event) => {
+                  guard.guardClick(event, `/chat/${chat.id}`)
+                  // The drawer stays open behind the dialog: closing it would
+                  // hide the link the user is being asked about.
+                  if (!event.defaultPrevented) closeSidebar()
+                }}
                 className={({ isActive }) =>
                   [
                     'block border-l-2 py-2.5 pl-3 pr-11 text-[12px] transition-colors nav:pr-9',
@@ -99,6 +113,16 @@ export default function ChatList() {
           ))}
         </nav>
       )}
+
+      <ConfirmModal
+        open={guard.pendingPath !== null}
+        title={UNSAVED_TITLE}
+        description={UNSAVED_DESCRIPTION}
+        confirmLabel={UNSAVED_LEAVE_LABEL}
+        cancelLabel={UNSAVED_STAY_LABEL}
+        onConfirm={guard.leave}
+        onCancel={guard.stay}
+      />
 
       <ConfirmModal
         open={pendingDelete !== null}

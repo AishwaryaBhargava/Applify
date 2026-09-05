@@ -1,41 +1,67 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  SECTION_ERROR_KEY,
+  sectionsEqual,
+  stripBlankEntries,
+  toErrorMap,
+  validateSection,
+  type SectionErrorMap,
+} from '../lib/profileValidation'
 import { useProfileStore } from '../store/profileStore'
+import { pushToast } from '../store/toastStore'
 import type { SectionSaveStatus } from '../components/profile/ProfileSection'
 import type { ParsedProfile, ProfileSectionKey } from '../types'
 
-/**
- * Long enough that tabbing across a whole entry sends one PATCH instead of
- * one per field, short enough that the "Saved" flash still feels immediate.
- */
-const SAVE_DEBOUNCE_MS = 400
 /** How long "Saved" stays up before fading out. */
 const SAVED_FLASH_MS = 1500
 
+/** Toast shown when the client-side rules reject a save before it is sent. */
+export const VALIDATION_TOAST = 'Fill in the required fields'
+
+/** The note shown when a save quietly dropped rows the user never filled in. */
+export const BLANKS_REMOVED_NOTE = 'Empty rows were removed'
+
 export interface SectionEditor<K extends ProfileSectionKey> {
-  /** The value to render — the local draft, which may be ahead of the server. */
+  /** The last value the server confirmed — what Discard goes back to. */
+  saved: ParsedProfile[K]
+  /** What the inputs render: the local draft, which may be ahead of `saved`. */
   draft: ParsedProfile[K]
   isEditing: boolean
-  status: SectionSaveStatus
-  error: string | null
-  /** Replaces the whole section value and schedules a debounced save. */
-  setDraft: (next: ParsedProfile[K]) => void
+  /** True when the draft differs from `saved` in any way that would be saved. */
+  isDirty: boolean
   /**
-   * Changes the draft without saving — for edits that are not yet worth a
-   * PATCH, such as adding a blank entry the user has not filled in. The
-   * backend drops empty entries, so saving one would make the new card vanish
-   * under the user's cursor.
+   * Field errors keyed `"<index>.<field>"`, or `"section"` for a problem that
+   * is not about one row. Populated by the client-side rules or by a 422 —
+   * both produce the same shape.
    */
-  setDraftLocal: (next: ParsedProfile[K]) => void
-  toggleEdit: () => void
+  errors: SectionErrorMap
+  status: SectionSaveStatus
+  /** A one-off note under the header ("Empty rows were removed"). */
+  note: string | null
+  /** Enters edit mode on a fresh copy of the saved value. */
+  beginEdit: () => void
+  /** Local only. Never touches the network — that is what `save` is for. */
+  setDraft: (next: ParsedProfile[K]) => void
+  save: () => Promise<void>
+  /** Throws the draft away and leaves edit mode. */
+  discard: () => void
 }
 
 /**
- * Edit state for one profile section: a local draft, a debounced whole-section
- * save, and the status the section header renders.
+ * Edit state for one profile section: a draft, explicit Save and Discard, and
+ * the same validation the backend runs, mirrored client-side.
  *
- * The draft is deliberately separate from the store. `updateSection` rolls the
- * store back when a PATCH fails; the draft does not, so a failed save leaves
- * the user's typing on screen to retry rather than silently reverting it.
+ * This used to save on blur, on a 400ms debounce, and flush whatever was
+ * pending on unmount. That is a fine model for a field that cannot be wrong and
+ * a poor one for this form: `PATCH /profile` requires a title *and* a company
+ * on a role, so tabbing out of a half-typed row fired a request that could only
+ * fail, and the row a user added and had not filled in yet was dropped by the
+ * server on the way past. Saving is now something the user asks for, once, when
+ * the row is complete — and it is checked here first, so an incomplete row
+ * costs no request at all.
+ *
+ * Nothing here writes to the store until the user presses Save, so a draft is
+ * never confused with data.
  *
  * @param section The `parsed_json` key this editor owns.
  * @param value The server-confirmed value for that section.
@@ -45,89 +71,149 @@ export function useProfileSectionEditor<K extends ProfileSectionKey>(
   value: ParsedProfile[K],
 ): SectionEditor<K> {
   const updateSection = useProfileStore((state) => state.updateSection)
+  const markSectionDirty = useProfileStore((state) => state.markSectionDirty)
 
   const [draft, setDraftState] = useState<ParsedProfile[K]>(value)
   const [isEditing, setIsEditing] = useState(false)
   const [status, setStatus] = useState<SectionSaveStatus>('idle')
-  const [error, setError] = useState<string | null>(null)
+  const [errors, setErrors] = useState<SectionErrorMap>({})
+  const [note, setNote] = useState<string | null>(null)
 
-  /** True while a local edit has not yet been confirmed by the server. */
-  const dirtyRef = useRef(false)
-  const pendingRef = useRef<ParsedProfile[K] | null>(null)
-  const debounceRef = useRef<number | null>(null)
   const flashRef = useRef<number | null>(null)
+  const savingRef = useRef(false)
 
-  // Adopt the server value, unless the user has an unsaved or failed edit in
-  // flight — overwriting that would throw away their typing.
+  // Adopt the server value whenever the user is not in the middle of an edit.
+  // While editing, the draft is the truth on screen and a refetch must not
+  // reach in and rewrite what someone is typing.
   useEffect(() => {
-    if (!dirtyRef.current) setDraftState(value)
+    if (!isEditing) setDraftState(value)
+  }, [value, isEditing])
+
+  const isDirty = isEditing && !sectionsEqual(draft, value)
+
+  // The sidebar's navigation guard reads this out of the store; the effect is
+  // what keeps the store's view of "is anything unsaved" honest, including on
+  // unmount, when the draft goes away with the page.
+  useEffect(() => {
+    markSectionDirty(section, isDirty)
+  }, [section, isDirty, markSectionDirty])
+
+  useEffect(
+    () => () => {
+      markSectionDirty(section, false)
+      if (flashRef.current) window.clearTimeout(flashRef.current)
+    },
+    [section, markSectionDirty],
+  )
+
+  const beginEdit = useCallback(() => {
+    if (flashRef.current) window.clearTimeout(flashRef.current)
+    setDraftState(value)
+    setErrors({})
+    setNote(null)
+    setStatus('idle')
+    setIsEditing(true)
   }, [value])
 
-  const flush = useCallback(async () => {
-    if (debounceRef.current) {
-      window.clearTimeout(debounceRef.current)
-      debounceRef.current = null
+  const setDraft = useCallback((next: ParsedProfile[K]) => {
+    setDraftState(next)
+    // Typing in a box that is complaining should stop it complaining; the next
+    // Save re-runs every rule anyway.
+    setErrors((current) => (Object.keys(current).length ? {} : current))
+    setStatus((current) => (current === 'error' ? 'idle' : current))
+  }, [])
+
+  const discard = useCallback(() => {
+    if (flashRef.current) window.clearTimeout(flashRef.current)
+    setDraftState(value)
+    setErrors({})
+    setNote(null)
+    setStatus('idle')
+    setIsEditing(false)
+  }, [value])
+
+  const save = useCallback(async () => {
+    if (savingRef.current) return
+    if (flashRef.current) window.clearTimeout(flashRef.current)
+
+    // A row with nothing in it is one the user added and never filled in. The
+    // backend drops it silently; dropping it here as well means the request
+    // and the screen agree about what was saved, and the indexes in a 422 line
+    // up with the rows that are still on display.
+    const { value: cleaned, removed } = stripBlankEntries(section, draft)
+    if (removed > 0) {
+      setDraftState(cleaned)
+      setNote(BLANKS_REMOVED_NOTE)
+    } else {
+      setNote(null)
     }
-    const next = pendingRef.current
-    if (next === null) return
-    pendingRef.current = null
 
-    setStatus('saving')
-    setError(null)
-
-    const message = await updateSection(section, next)
-    if (message) {
+    const found = validateSection(section, cleaned)
+    if (found.length > 0) {
+      setErrors(toErrorMap(found))
       setStatus('error')
-      setError(message)
+      pushToast(VALIDATION_TOAST, 'error')
       return
     }
 
-    dirtyRef.current = false
-    setError(null)
-    setStatus('saved')
-    if (flashRef.current) window.clearTimeout(flashRef.current)
-    flashRef.current = window.setTimeout(() => setStatus('idle'), SAVED_FLASH_MS)
-  }, [section, updateSection])
+    savingRef.current = true
+    setErrors({})
+    setStatus('saving')
 
-  const setDraft = useCallback(
-    (next: ParsedProfile[K]) => {
-      dirtyRef.current = true
-      pendingRef.current = next
+    const result = await updateSection(section, cleaned)
+    savingRef.current = false
+
+    if (result.ok) {
+      const next = result.profile.parsed_json[section]
       setDraftState(next)
-      if (debounceRef.current) window.clearTimeout(debounceRef.current)
-      debounceRef.current = window.setTimeout(() => {
-        void flush()
-      }, SAVE_DEBOUNCE_MS)
-    },
-    [flush],
+      setErrors({})
+      setIsEditing(false)
+      setStatus('saved')
+      flashRef.current = window.setTimeout(() => setStatus('idle'), SAVED_FLASH_MS)
+      return
+    }
+
+    // Failed: the draft stays exactly as typed and edit mode stays open, so
+    // the user can fix the field rather than retype the row.
+    setStatus('error')
+    const fieldErrors = result.errors.filter((error) => error.section === section)
+    if (fieldErrors.length > 0) {
+      setErrors(toErrorMap(fieldErrors))
+    } else {
+      // A 422 with no usable `errors` (pydantic's own shape), or a transport
+      // failure: one line above the section is the best we can do.
+      setErrors({ [SECTION_ERROR_KEY]: result.message })
+    }
+  }, [section, draft, updateSection])
+
+  return useMemo(
+    () => ({
+      saved: value,
+      draft,
+      isEditing,
+      isDirty,
+      errors,
+      status,
+      note,
+      beginEdit,
+      setDraft,
+      save,
+      discard,
+    }),
+    [
+      value,
+      draft,
+      isEditing,
+      isDirty,
+      errors,
+      status,
+      note,
+      beginEdit,
+      setDraft,
+      save,
+      discard,
+    ],
   )
-
-  const setDraftLocal = useCallback((next: ParsedProfile[K]) => {
-    // Marked dirty so a later server response cannot wipe the new blank entry.
-    dirtyRef.current = true
-    setDraftState(next)
-  }, [])
-
-  const toggleEdit = useCallback(() => {
-    // Leaving edit mode saves whatever is still pending straight away. The
-    // blur that fires as the button is pressed has already queued it.
-    if (isEditing) void flush()
-    setIsEditing((editing) => !editing)
-  }, [isEditing, flush])
-
-  // A pending edit must not be lost to a navigation inside the debounce window.
-  useEffect(
-    () => () => {
-      if (debounceRef.current) window.clearTimeout(debounceRef.current)
-      if (flashRef.current) window.clearTimeout(flashRef.current)
-      const next = pendingRef.current
-      pendingRef.current = null
-      if (next !== null) void updateSection(section, next)
-    },
-    [section, updateSection],
-  )
-
-  return { draft, isEditing, status, error, setDraft, setDraftLocal, toggleEdit }
 }
 
 export default useProfileSectionEditor

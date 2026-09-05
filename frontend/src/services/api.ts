@@ -51,6 +51,17 @@ export function apiErrorStatus(error: unknown): number | undefined {
   return error instanceof AxiosError ? error.response?.status : undefined
 }
 
+/**
+ * The parsed response body of a failed request, for the one caller that needs
+ * more than `detail`: `PATCH /profile` adds an `errors` list the profile page
+ * highlights individual inputs from.
+ */
+export function apiErrorBody<T = unknown>(error: unknown): T | undefined {
+  return error instanceof AxiosError
+    ? (error.response?.data as T | undefined)
+    : undefined
+}
+
 /** The backend's `detail`, in whichever of its two shapes it arrived. */
 function responseDetail(error: unknown): string {
   if (!(error instanceof AxiosError)) return ''

@@ -11,7 +11,15 @@ import ProfileField from '../components/profile/ProfileField'
 import ProfileGapNudge from '../components/profile/ProfileGapNudge'
 import ProfileSection from '../components/profile/ProfileSection'
 import ProfileSkeleton from '../components/profile/ProfileSkeleton'
-import useProfileSectionEditor from '../hooks/useProfileSectionEditor'
+import useProfileSectionEditor, {
+  type SectionEditor,
+} from '../hooks/useProfileSectionEditor'
+import useUnsavedChanges from '../hooks/useUnsavedChanges'
+import {
+  PROFILE_LIMITS,
+  SECTION_ERROR_KEY,
+  errorKey,
+} from '../lib/profileValidation'
 import {
   emptyCertification,
   emptyEducation,
@@ -24,6 +32,7 @@ import type {
   Certification,
   Education,
   ProfileGap,
+  ProfileSectionKey,
   Project,
   WorkExperience,
 } from '../types'
@@ -52,6 +61,31 @@ function joinMeta(parts: (string | null | undefined)[]): string {
 /* Sections                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The header wiring every section shares: the Edit / Save / Discard buttons,
+ * the unsaved-changes pill, and the section-level error line.
+ *
+ * Field-level errors stay with the field. This is only the part of the error
+ * map that has no single input to sit under.
+ */
+function headerProps<K extends ProfileSectionKey>(editor: SectionEditor<K>) {
+  return {
+    isEditing: editor.isEditing,
+    isDirty: editor.isDirty,
+    status: editor.status,
+    errorMessage: editor.errors[SECTION_ERROR_KEY] ?? null,
+    note: editor.note,
+    onEdit: editor.beginEdit,
+    onSave: () => {
+      void editor.save()
+    },
+    onDiscard: editor.discard,
+  }
+}
+
+/** The length at which the summary starts showing how much room is left. */
+const SUMMARY_COUNTER_FROM = 1800
+
 function SummarySection({ value }: { value: string }) {
   const editor = useProfileSectionEditor('summary', value)
 
@@ -59,10 +93,7 @@ function SummarySection({ value }: { value: string }) {
     <ProfileSection
       title="Summary"
       description="Two or three sentences on what you do and the impact you have had."
-      isEditing={editor.isEditing}
-      onToggleEdit={editor.toggleEdit}
-      status={editor.status}
-      errorMessage={editor.error}
+      {...headerProps(editor)}
     >
       <ProfileField
         label="Professional summary"
@@ -71,20 +102,49 @@ function SummarySection({ value }: { value: string }) {
         hideLabelInView
         multiline
         rows={5}
+        maxLength={PROFILE_LIMITS.SUMMARY}
+        counterFrom={SUMMARY_COUNTER_FROM}
         placeholder="Product-minded backend engineer with six years building payments infrastructure..."
         emptyText="No summary yet."
-        onCommit={editor.setDraft}
+        onChange={editor.setDraft}
       />
     </ProfileSection>
   )
 }
 
 const EXPERIENCE_FIELDS: EntryFieldSpec<WorkExperience>[] = [
-  { key: 'title', label: 'Role', placeholder: 'Senior Backend Engineer' },
-  { key: 'company', label: 'Company', placeholder: 'Acme Payments' },
-  { key: 'location', label: 'Location', placeholder: 'Bengaluru, India' },
-  { key: 'start_date', label: 'Start', placeholder: 'Jan 2022' },
-  { key: 'end_date', label: 'End', placeholder: 'Mar 2024' },
+  {
+    key: 'title',
+    label: 'Role',
+    placeholder: 'Senior Backend Engineer',
+    required: true,
+    maxLength: PROFILE_LIMITS.NAME,
+  },
+  {
+    key: 'company',
+    label: 'Company',
+    placeholder: 'Acme Payments',
+    required: true,
+    maxLength: PROFILE_LIMITS.NAME,
+  },
+  {
+    key: 'location',
+    label: 'Location',
+    placeholder: 'Bengaluru, India',
+    maxLength: PROFILE_LIMITS.NAME,
+  },
+  {
+    key: 'start_date',
+    label: 'Start',
+    placeholder: 'Jan 2022',
+    maxLength: PROFILE_LIMITS.DATE,
+  },
+  {
+    key: 'end_date',
+    label: 'End',
+    placeholder: 'Mar 2024',
+    maxLength: PROFILE_LIMITS.DATE,
+  },
   { key: 'current', label: 'I currently work here', kind: 'toggle' },
   {
     key: 'highlights',
@@ -92,6 +152,8 @@ const EXPERIENCE_FIELDS: EntryFieldSpec<WorkExperience>[] = [
     kind: 'lines',
     placeholder: 'Cut checkout latency 40% by moving settlement off the request path',
     hint: 'One bullet per line. Numbers are what tailored resumes are built from.',
+    itemMaxLength: PROFILE_LIMITS.HIGHLIGHT,
+    maxItems: PROFILE_LIMITS.HIGHLIGHTS,
   },
 ]
 
@@ -130,10 +192,7 @@ function ExperienceSection({ value }: { value: WorkExperience[] }) {
     <ProfileSection
       title="Experience"
       description="The roles every fit analysis is compared against."
-      isEditing={editor.isEditing}
-      onToggleEdit={editor.toggleEdit}
-      status={editor.status}
-      errorMessage={editor.error}
+      {...headerProps(editor)}
     >
       <ProfileEntryList
         entries={editor.draft}
@@ -141,7 +200,7 @@ function ExperienceSection({ value }: { value: WorkExperience[] }) {
         isEditing={editor.isEditing}
         makeEmpty={emptyWorkExperience}
         onChange={editor.setDraft}
-        onAdd={editor.setDraftLocal}
+        errors={editor.errors}
         addLabel="Add role"
         emptyText="No work experience yet."
         renderView={(entry) => <ExperienceView entry={entry} />}
@@ -150,18 +209,50 @@ function ExperienceSection({ value }: { value: WorkExperience[] }) {
   )
 }
 
+/** Either box satisfies the backend's "what did you study" rule. */
+const STUDIED_NOTE = 'Degree or field of study is required'
+
 const EDUCATION_FIELDS: EntryFieldSpec<Education>[] = [
-  { key: 'degree', label: 'Degree', placeholder: 'B.Tech' },
-  { key: 'institution', label: 'Institution', placeholder: 'IIT Bombay' },
-  { key: 'field', label: 'Field', placeholder: 'Computer Science' },
-  { key: 'start_date', label: 'Start', placeholder: '2016' },
-  { key: 'end_date', label: 'End', placeholder: '2020' },
+  {
+    key: 'degree',
+    label: 'Degree',
+    placeholder: 'B.Tech',
+    requiredNote: STUDIED_NOTE,
+    maxLength: PROFILE_LIMITS.NAME,
+  },
+  {
+    key: 'institution',
+    label: 'Institution',
+    placeholder: 'IIT Bombay',
+    required: true,
+    maxLength: PROFILE_LIMITS.NAME,
+  },
+  {
+    key: 'field',
+    label: 'Field',
+    placeholder: 'Computer Science',
+    requiredNote: STUDIED_NOTE,
+    maxLength: PROFILE_LIMITS.NAME,
+  },
+  {
+    key: 'start_date',
+    label: 'Start',
+    placeholder: '2016',
+    maxLength: PROFILE_LIMITS.DATE,
+  },
+  {
+    key: 'end_date',
+    label: 'End',
+    placeholder: '2020',
+    maxLength: PROFILE_LIMITS.DATE,
+  },
   {
     key: 'details',
     label: 'Details',
     kind: 'textarea',
     rows: 2,
     placeholder: 'Grade, thesis, coursework worth mentioning',
+    maxLength: PROFILE_LIMITS.DETAIL,
   },
 ]
 
@@ -194,10 +285,7 @@ function EducationSection({ value }: { value: Education[] }) {
     <ProfileSection
       title="Education"
       description="Some roles screen on this before anything else."
-      isEditing={editor.isEditing}
-      onToggleEdit={editor.toggleEdit}
-      status={editor.status}
-      errorMessage={editor.error}
+      {...headerProps(editor)}
     >
       <ProfileEntryList
         entries={editor.draft}
@@ -205,7 +293,7 @@ function EducationSection({ value }: { value: Education[] }) {
         isEditing={editor.isEditing}
         makeEmpty={emptyEducation}
         onChange={editor.setDraft}
-        onAdd={editor.setDraftLocal}
+        errors={editor.errors}
         addLabel="Add education"
         emptyText="No education yet."
         renderView={(entry) => <EducationView entry={entry} />}
@@ -221,10 +309,7 @@ function SkillsSection({ value }: { value: string[] }) {
     <ProfileSection
       title="Skills"
       description="Keyword matching against a job description starts here."
-      isEditing={editor.isEditing}
-      onToggleEdit={editor.toggleEdit}
-      status={editor.status}
-      errorMessage={editor.error}
+      {...headerProps(editor)}
     >
       <ProfileChips
         values={editor.draft}
@@ -232,6 +317,9 @@ function SkillsSection({ value }: { value: string[] }) {
         tone="teal"
         placeholder="PostgreSQL, then Enter"
         emptyText="No skills yet."
+        maxLength={PROFILE_LIMITS.SKILL}
+        itemLabel="skill"
+        error={editor.errors[errorKey(null, 'skills')]}
         onChange={editor.setDraft}
       />
     </ProfileSection>
@@ -239,9 +327,25 @@ function SkillsSection({ value }: { value: string[] }) {
 }
 
 const CERTIFICATION_FIELDS: EntryFieldSpec<Certification>[] = [
-  { key: 'name', label: 'Certification', placeholder: 'AWS Solutions Architect' },
-  { key: 'issuer', label: 'Issuer', placeholder: 'Amazon Web Services' },
-  { key: 'year', label: 'Year', placeholder: '2023' },
+  {
+    key: 'name',
+    label: 'Certification',
+    placeholder: 'AWS Solutions Architect',
+    required: true,
+    maxLength: PROFILE_LIMITS.NAME,
+  },
+  {
+    key: 'issuer',
+    label: 'Issuer',
+    placeholder: 'Amazon Web Services',
+    maxLength: PROFILE_LIMITS.NAME,
+  },
+  {
+    key: 'year',
+    label: 'Year',
+    placeholder: '2023',
+    maxLength: PROFILE_LIMITS.DATE,
+  },
 ]
 
 function CertificationView({ entry }: { entry: Certification }) {
@@ -266,10 +370,7 @@ function CertificationsSection({ value }: { value: Certification[] }) {
     <ProfileSection
       title="Certifications"
       description="An easy differentiator when a job description asks for one by name."
-      isEditing={editor.isEditing}
-      onToggleEdit={editor.toggleEdit}
-      status={editor.status}
-      errorMessage={editor.error}
+      {...headerProps(editor)}
     >
       <ProfileEntryList
         entries={editor.draft}
@@ -277,7 +378,7 @@ function CertificationsSection({ value }: { value: Certification[] }) {
         isEditing={editor.isEditing}
         makeEmpty={emptyCertification}
         onChange={editor.setDraft}
-        onAdd={editor.setDraftLocal}
+        errors={editor.errors}
         addLabel="Add certification"
         emptyText="No certifications yet."
         renderView={(entry) => <CertificationView entry={entry} />}
@@ -287,14 +388,26 @@ function CertificationsSection({ value }: { value: Certification[] }) {
 }
 
 const PROJECT_FIELDS: EntryFieldSpec<Project>[] = [
-  { key: 'name', label: 'Project', placeholder: 'Applify' },
-  { key: 'link', label: 'Link', placeholder: 'https://github.com/...' },
+  {
+    key: 'name',
+    label: 'Project',
+    placeholder: 'Applify',
+    required: true,
+    maxLength: PROFILE_LIMITS.NAME,
+  },
+  {
+    key: 'link',
+    label: 'Link',
+    placeholder: 'https://github.com/...',
+    maxLength: PROFILE_LIMITS.LINK,
+  },
   {
     key: 'description',
     label: 'Description',
     kind: 'textarea',
     rows: 3,
     placeholder: 'What it does, and what you built.',
+    maxLength: PROFILE_LIMITS.DETAIL,
   },
   {
     key: 'technologies',
@@ -302,6 +415,7 @@ const PROJECT_FIELDS: EntryFieldSpec<Project>[] = [
     kind: 'lines',
     placeholder: 'FastAPI',
     hint: 'One per line',
+    itemMaxLength: PROFILE_LIMITS.SKILL,
   },
 ]
 
@@ -352,10 +466,7 @@ function ProjectsSection({ value }: { value: Project[] }) {
     <ProfileSection
       title="Projects"
       description="Often the strongest evidence for a skill your job history does not show."
-      isEditing={editor.isEditing}
-      onToggleEdit={editor.toggleEdit}
-      status={editor.status}
-      errorMessage={editor.error}
+      {...headerProps(editor)}
     >
       <ProfileEntryList
         entries={editor.draft}
@@ -363,7 +474,7 @@ function ProjectsSection({ value }: { value: Project[] }) {
         isEditing={editor.isEditing}
         makeEmpty={emptyProject}
         onChange={editor.setDraft}
-        onAdd={editor.setDraftLocal}
+        errors={editor.errors}
         addLabel="Add project"
         emptyText="No projects yet."
         renderView={(entry) => <ProjectView entry={entry} />}
@@ -379,10 +490,7 @@ function AchievementsSection({ value }: { value: string[] }) {
     <ProfileSection
       title="Achievements"
       description="Awards, talks, and publications a cover letter can open with."
-      isEditing={editor.isEditing}
-      onToggleEdit={editor.toggleEdit}
-      status={editor.status}
-      errorMessage={editor.error}
+      {...headerProps(editor)}
     >
       <ProfileChips
         values={editor.draft}
@@ -390,6 +498,9 @@ function AchievementsSection({ value }: { value: string[] }) {
         tone="neutral"
         placeholder="Speaker, PyCon India 2024 — then Enter"
         emptyText="No achievements yet."
+        maxLength={PROFILE_LIMITS.ACHIEVEMENT}
+        itemLabel="achievement"
+        error={editor.errors[errorKey(null, 'achievements')]}
         onChange={editor.setDraft}
       />
     </ProfileSection>
@@ -454,7 +565,12 @@ export default function Profile() {
   const fetchProfile = useProfileStore((state) => state.fetchProfile)
   const fetchGaps = useProfileStore((state) => state.fetchGaps)
   const dismissGap = useProfileStore((state) => state.dismissGap)
+  const hasUnsaved = useProfileStore((state) => state.dirtySections.size > 0)
   const toggleSidebar = useUiStore((state) => state.toggleSidebar)
+
+  // Closing the tab or hitting reload with a half-edited role on screen asks
+  // first. In-app navigation is guarded separately, at the sidebar links.
+  useUnsavedChanges(hasUnsaved)
 
   useEffect(() => {
     void (async () => {

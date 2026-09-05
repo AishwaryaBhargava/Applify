@@ -1,7 +1,11 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { apiErrorMessage } from '../services/api'
-import { getProfile, getProfileGaps, updateProfile } from '../services/profile'
+import {
+  getProfile,
+  getProfileGaps,
+  updateProfileSection,
+  type ProfileUpdateResult,
+} from '../services/profile'
 import { pushToast } from './toastStore'
 import type { ParsedProfile, Profile, ProfileGap, ProfileSectionKey } from '../types'
 
@@ -44,22 +48,35 @@ export interface ProfileState {
   isLoading: boolean
   isSaving: boolean
   error: string | null
+  /**
+   * Sections with an unsaved draft on screen.
+   *
+   * Lives in the store rather than in the page so the sidebar — which is not a
+   * child of the profile page — can ask "is there anything to lose?" before it
+   * lets a navigation through. Never persisted: a draft does not survive a
+   * reload, so a dirty flag that did would be a lie.
+   */
+  dirtySections: Set<ProfileSectionKey>
 
   setProfile: (profile: Profile | null) => void
   setGaps: (gaps: ProfileGap[]) => void
   fetchProfile: () => Promise<void>
   fetchGaps: () => Promise<void>
   /**
-   * Replaces one section wholesale. Optimistic: local state moves first, the
-   * server-confirmed profile replaces it on success, and the previous value is
-   * restored on failure.
+   * Replaces one section wholesale, on an explicit Save.
    *
-   * Returns null on success, or the error message to show inline.
+   * Not optimistic and never throws: the server-confirmed profile is adopted on
+   * success, and a failure returns the reason — including the field-level
+   * `errors` of a 422 — for the section editor to render against its inputs.
    */
   updateSection: <K extends ProfileSectionKey>(
     section: K,
     value: ParsedProfile[K],
-  ) => Promise<string | null>
+  ) => Promise<ProfileUpdateResult>
+  /** Records (or clears) one section's unsaved-changes flag. */
+  markSectionDirty: (section: ProfileSectionKey, dirty: boolean) => void
+  /** Forgets every dirty flag — on leaving the page, or after a discard-all. */
+  clearDirtySections: () => void
   dismissGap: (gapId: string) => void
   /** Clears every dismissal, so a re-uploaded profile nudges again. */
   resetDismissals: () => void
@@ -75,6 +92,7 @@ export const useProfileStore = create<ProfileState>()(
       isLoading: false,
       isSaving: false,
       error: null,
+      dirtySections: new Set<ProfileSectionKey>(),
 
       setProfile: (profile) => set({ profile }),
       setGaps: (gaps) => set({ gaps }),
@@ -101,37 +119,48 @@ export const useProfileStore = create<ProfileState>()(
       },
 
       updateSection: async (section, value) => {
-        const previous = get().profile
-        if (!previous) return 'Upload a resume before editing your profile.'
-
-        set({
-          isSaving: true,
-          error: null,
-          profile: {
-            ...previous,
-            parsed_json: { ...previous.parsed_json, [section]: value },
-          },
-        })
-
-        try {
-          const saved = await updateProfile({ [section]: value })
-          set({ profile: saved, isSaving: false, error: null })
-          // Filling a section can clear its nudge (or reveal a new thin one).
-          await get().fetchGaps()
-          return null
-        } catch (error) {
-          const message = apiErrorMessage(
-            error,
-            'We could not save that change. Please try again.',
-          )
-          // Roll the store back to the last server-confirmed profile. The
-          // section editor keeps its own draft, so the user's typing survives.
-          set({ profile: previous, isSaving: false, error: message })
-          // The section header shows the same message inline; the toast is for
-          // a save that failed after the user scrolled somewhere else.
-          pushToast(message, 'error')
-          return message
+        if (!get().profile) {
+          return {
+            ok: false,
+            message: 'Upload a resume before editing your profile.',
+            errors: [],
+          }
         }
+
+        set({ isSaving: true, error: null })
+        const result = await updateProfileSection({ [section]: value })
+
+        if (result.ok) {
+          set({ profile: result.profile, isSaving: false, error: null })
+          // Filling a section can clear its nudge (or reveal a new thin one).
+          // Only ever after a save the server accepted.
+          await get().fetchGaps()
+          return result
+        }
+
+        // The stored profile was never touched — the save is explicit, so
+        // there is no optimistic write to roll back, and the editor still
+        // holds the draft the user typed.
+        set({ isSaving: false, error: result.message })
+        // A 422 is rendered against the offending inputs; a toast would say
+        // the same thing twice. Anything else gets one, because the reason is
+        // not visible anywhere near the section.
+        if (result.status !== 422) pushToast(result.message, 'error')
+        return result
+      },
+
+      markSectionDirty: (section, dirty) => {
+        const current = get().dirtySections
+        if (current.has(section) === dirty) return
+        const next = new Set(current)
+        if (dirty) next.add(section)
+        else next.delete(section)
+        set({ dirtySections: next })
+      },
+
+      clearDirtySections: () => {
+        if (get().dirtySections.size === 0) return
+        set({ dirtySections: new Set<ProfileSectionKey>() })
       },
 
       dismissGap: (gapId) => {
@@ -154,6 +183,7 @@ export const useProfileStore = create<ProfileState>()(
           isLoading: false,
           isSaving: false,
           error: null,
+          dirtySections: new Set<ProfileSectionKey>(),
         }),
     }),
     {
@@ -175,5 +205,14 @@ export const useProfileStore = create<ProfileState>()(
     },
   ),
 )
+
+/**
+ * Whether any profile section has an unsaved draft, readable from outside
+ * React — the navigation guard runs inside a click handler in the sidebar,
+ * which is nowhere near the profile page's component tree.
+ */
+export function hasUnsavedProfileChanges(): boolean {
+  return useProfileStore.getState().dirtySections.size > 0
+}
 
 export default useProfileStore

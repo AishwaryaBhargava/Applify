@@ -99,6 +99,32 @@ export interface ProfileGapsResponse {
   gaps: ProfileGap[]
 }
 
+/**
+ * One field-level complaint from `PATCH /profile`'s 422.
+ *
+ * `index` is the position in the **submitted** list, so it lines up with the
+ * editor's rows, and is `null` for a section-level failure such as an
+ * over-long summary. Mirrors the entries in the response's `errors` array, and
+ * is the shape `lib/profileValidation` produces client-side so both sources of
+ * truth render identically.
+ */
+export interface ProfileFieldError {
+  section: string
+  index: number | null
+  field: string
+  message: string
+}
+
+/**
+ * Body of a `PATCH /profile` 422. `detail` is the toast sentence; `errors` is
+ * what the profile page highlights on. A malformed body (a string where a list
+ * belongs) is pydantic's own 422 and carries no `errors` key.
+ */
+export interface ProfileUpdateErrorResponse {
+  detail?: string
+  errors?: ProfileFieldError[]
+}
+
 /* ------------------------------------------------------------------ */
 /* Job chats and messages                                              */
 /* ------------------------------------------------------------------ */

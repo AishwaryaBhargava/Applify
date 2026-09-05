@@ -1,12 +1,14 @@
 import type { AxiosProgressEvent } from 'axios'
-import api, { apiErrorMessage, apiErrorStatus } from './api'
+import api, { apiErrorBody, apiErrorMessage, apiErrorStatus } from './api'
 import type {
   Certification,
   Education,
   ParsedProfile,
   Profile,
+  ProfileFieldError,
   ProfileGap,
   ProfileGapsResponse,
+  ProfileUpdateErrorResponse,
   Project,
   WorkExperience,
 } from '../types'
@@ -152,6 +154,60 @@ export async function updateProfile(
 ): Promise<Profile> {
   const { data } = await api.patch<Profile>('/profile', patch)
   return normalizeProfile(data)
+}
+
+/**
+ * Result of a section save. A 422 is a normal outcome of an editor that lets
+ * the user type freely, so it is returned as data rather than thrown: the
+ * caller maps `errors` onto the inputs that caused them.
+ */
+export type ProfileUpdateResult =
+  | { ok: true; profile: Profile }
+  | {
+      ok: false
+      status?: number
+      /** The toast sentence — `detail`, or a transport-level fallback. */
+      message: string
+      /** Field-level complaints; empty for anything that is not a 422. */
+      errors: ProfileFieldError[]
+    }
+
+/** Reads the `errors` array off a 422 body, ignoring anything malformed. */
+function readFieldErrors(error: unknown): ProfileFieldError[] {
+  const body = apiErrorBody<ProfileUpdateErrorResponse>(error)
+  if (!body || !Array.isArray(body.errors)) return []
+  return body.errors.filter(
+    (item): item is ProfileFieldError =>
+      !!item &&
+      typeof item === 'object' &&
+      typeof item.field === 'string' &&
+      typeof item.message === 'string',
+  )
+}
+
+/**
+ * `PATCH /profile` for one section, with the 422 kept as a value.
+ *
+ * The throwing `updateProfile` above stays for callers that only care whether
+ * it worked; the profile editor needs the field errors, and an exception is a
+ * poor carrier for a list of them.
+ */
+export async function updateProfileSection(
+  patch: Partial<ParsedProfile>,
+): Promise<ProfileUpdateResult> {
+  try {
+    return { ok: true, profile: await updateProfile(patch) }
+  } catch (error) {
+    return {
+      ok: false,
+      status: apiErrorStatus(error),
+      message: apiErrorMessage(
+        error,
+        'We could not save that change. Please try again.',
+      ),
+      errors: readFieldErrors(error),
+    }
+  }
 }
 
 /**

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useId } from 'react'
 
 interface ProfileFieldProps {
   label: string
@@ -14,17 +14,37 @@ interface ProfileFieldProps {
   emptyText?: string
   /** Drops the label in view mode when the section title already says it. */
   hideLabelInView?: boolean
-  /** Commits the edited value to the parent. Fired on blur, never per keystroke. */
-  onCommit: (value: string) => void
+  /** Marks the field with an asterisk and `aria-required`. */
+  required?: boolean
+  /**
+   * An asterisk with a tooltip, for a field that is required only as part of a
+   * pair (education wants a degree *or* a field of study). No `aria-required`:
+   * neither box on its own is mandatory.
+   */
+  requiredNote?: string
+  /** The message for this field, from the section's error map. */
+  error?: string
+  /** Hard cap, enforced by the input itself. Mirrors the backend's limit. */
+  maxLength?: number
+  /**
+   * Show a live character count once the value reaches this length — quiet
+   * until the limit is close enough to matter.
+   */
+  counterFrom?: number
+  /** Lets the parent focus this input after adding a row. */
+  id?: string
+  /** Fires per keystroke: there is no autosave left for it to trigger. */
+  onChange: (value: string) => void
 }
 
 /**
  * A single editable profile field.
  *
- * The draft is local while the field has focus and is committed to the parent
- * on blur, so a section save is triggered once per field rather than once per
- * keystroke. External changes (a server-confirmed save, an entry removed above
- * this one) flow back in through `value`.
+ * Fully controlled. It used to hold its own draft and commit on blur, because
+ * blur was what triggered a save; now that saving is a button, local state
+ * would only be a second copy of the section draft to keep in sync — and the
+ * "Unsaved changes" pill has to light up on the first keystroke, not on the
+ * way out of the box.
  */
 export default function ProfileField({
   label,
@@ -36,16 +56,18 @@ export default function ProfileField({
   hint,
   emptyText = 'Not set',
   hideLabelInView = false,
-  onCommit,
+  required = false,
+  requiredNote,
+  error,
+  maxLength,
+  counterFrom,
+  id,
+  onChange,
 }: ProfileFieldProps) {
-  const [draft, setDraft] = useState(value)
-  const isFocusedRef = useRef(false)
-
-  // Re-sync when the value changes underneath us, but never while the user is
-  // typing into this field.
-  useEffect(() => {
-    if (!isFocusedRef.current) setDraft(value)
-  }, [value])
+  const generatedId = useId()
+  const fieldId = id ?? generatedId
+  const errorId = `${fieldId}-error`
+  const hintId = `${fieldId}-hint`
 
   if (!isEditing) {
     return (
@@ -66,49 +88,91 @@ export default function ProfileField({
     )
   }
 
-  const shared =
-    'w-full rounded-input border border-border-input bg-bg px-3 py-2 text-[16px] text-text-primary outline-none transition-colors placeholder:text-text-faint focus:border-teal-medium focus:bg-card sm:text-[13px]'
+  const showCounter =
+    counterFrom !== undefined &&
+    maxLength !== undefined &&
+    value.length >= counterFrom
+
+  const shared = [
+    'w-full rounded-input bg-bg px-3 py-2 text-[16px] text-text-primary outline-none transition-colors placeholder:text-text-faint focus:bg-card sm:text-[13px]',
+    error
+      ? 'border border-coral focus:border-coral'
+      : 'border border-border-input focus:border-teal-medium',
+  ].join(' ')
+
+  const describedBy =
+    [error ? errorId : null, hint ? hintId : null].filter(Boolean).join(' ') ||
+    undefined
+
+  const inputProps = {
+    id: fieldId,
+    value,
+    placeholder,
+    maxLength,
+    'aria-required': required || undefined,
+    'aria-invalid': error ? (true as const) : undefined,
+    'aria-describedby': describedBy,
+    className: shared,
+  }
 
   return (
     <div>
-      <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.7px] text-text-muted sm:text-[10px]">
+      <label
+        htmlFor={fieldId}
+        className="mb-1 block text-[11px] font-medium uppercase tracking-[0.7px] text-text-muted sm:text-[10px]"
+      >
         {label}
+        {(required || requiredNote) && (
+          <span
+            aria-hidden="true"
+            title={requiredNote ?? 'Required'}
+            className="ml-0.5 text-coral"
+          >
+            *
+          </span>
+        )}
       </label>
       {multiline ? (
         <textarea
-          value={draft}
+          {...inputProps}
           rows={rows}
-          placeholder={placeholder}
-          onFocus={() => {
-            isFocusedRef.current = true
-          }}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => {
-            isFocusedRef.current = false
-            if (draft !== value) onCommit(draft)
-          }}
+          onChange={(event) => onChange(event.target.value)}
           className={`${shared} resize-y leading-relaxed`}
         />
       ) : (
         <input
+          {...inputProps}
           type="text"
-          value={draft}
-          placeholder={placeholder}
-          onFocus={() => {
-            isFocusedRef.current = true
-          }}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => {
-            isFocusedRef.current = false
-            if (draft !== value) onCommit(draft)
-          }}
-          className={shared}
+          onChange={(event) => onChange(event.target.value)}
         />
       )}
-      {hint && (
-        <p className="mt-1 text-[12px] leading-relaxed text-text-faint sm:text-[11px]">
-          {hint}
+      {error && (
+        <p id={errorId} role="alert" className="mt-1 text-[12px] leading-relaxed text-coral-ink">
+          {error}
         </p>
+      )}
+      {(hint || showCounter) && (
+        <div className="mt-1 flex items-baseline justify-between gap-2">
+          {hint ? (
+            <p
+              id={hintId}
+              className="text-[12px] leading-relaxed text-text-faint sm:text-[11px]"
+            >
+              {hint}
+            </p>
+          ) : (
+            <span />
+          )}
+          {showCounter && (
+            <span
+              className={`flex-shrink-0 text-[11px] tabular-nums ${
+                value.length >= (maxLength ?? 0) ? 'text-coral' : 'text-text-faint'
+              }`}
+            >
+              {value.length}/{maxLength}
+            </span>
+          )}
+        </div>
       )}
     </div>
   )
