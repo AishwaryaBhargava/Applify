@@ -2,6 +2,7 @@ import TopBar from '../components/common/TopBar'
 import BackendStatus from '../components/common/BackendStatus'
 import ChatThread from '../components/chat/ChatThread'
 import ChatInput from '../components/chat/ChatInput'
+import ResumeNudgeBanner from '../components/profile/ResumeNudgeBanner'
 
 /**
  * Active job chat page.
@@ -10,6 +11,7 @@ import ChatInput from '../components/chat/ChatInput'
 export default function Chat() {
   return (
     <div className="flex h-full flex-col">
+      <ResumeNudgeBanner />
       <TopBar
         title="Chat"
         subtitle="One workspace per job opening"

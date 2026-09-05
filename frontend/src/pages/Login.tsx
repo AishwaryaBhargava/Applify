@@ -1,32 +1,21 @@
+import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import LoginForm from '../components/auth/LoginForm'
 import GoogleButton from '../components/auth/GoogleButton'
-import Logo from '../components/common/Logo'
+import AuthPitchPanel from '../components/auth/AuthPitchPanel'
+import useAuth from '../hooks/useAuth'
 
-/**
- * Login page shell.
- * TODO(Phase 3): wire the form to authStore and redirect on success.
- */
+/** Login page: deep teal pitch panel + email/password and Google sign-in. */
 export default function Login() {
+  const { clearError } = useAuth()
+
+  // Errors from a previous attempt should not greet the next visit.
+  useEffect(() => clearError, [clearError])
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg p-6">
-      <div className="grid w-full max-w-3xl overflow-hidden rounded-panel border border-border md:grid-cols-[220px_1fr]">
-        <div className="hidden flex-col justify-between bg-teal-deep p-8 md:flex">
-          <Logo size={32} variant="light" />
-          <div>
-            <h2 className="font-serif text-[22px] font-medium leading-snug text-white">
-              Your applications,
-              <br />
-              <span className="text-[#FAC775]">finally organized.</span>
-            </h2>
-            <p className="mt-3 text-[13px] leading-relaxed text-teal-soft">
-              One workspace for every job you apply to.
-            </p>
-          </div>
-          <p className="text-[11px] text-teal-soft">
-            Free during beta. No credit card required.
-          </p>
-        </div>
+      <div className="grid w-full max-w-3xl overflow-hidden rounded-panel border border-border bg-card md:grid-cols-[220px_1fr]">
+        <AuthPitchPanel />
 
         <div className="bg-card p-8">
           <h1 className="font-serif text-xl font-medium text-teal-ink">

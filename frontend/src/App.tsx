@@ -1,6 +1,8 @@
-import type { ReactNode } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { useEffect, type ReactNode } from 'react'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import Sidebar from './components/sidebar/Sidebar'
+import Spinner from './components/common/Spinner'
+import useAuth from './hooks/useAuth'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
 import Signup from './pages/Signup'
@@ -10,15 +12,69 @@ import Profile from './pages/Profile'
 import Tracker from './pages/Tracker'
 import Settings from './pages/Settings'
 
+/** Centered spinner used while the session or profile check is resolving. */
+function FullPageLoader({ label = 'Loading' }: { label?: string }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-bg">
+      <div className="flex flex-col items-center gap-3">
+        <Spinner size={24} label={label} className="text-teal-deep" />
+        <p className="text-[13px] text-text-muted">{label}</p>
+      </div>
+    </div>
+  )
+}
+
 /**
- * Auth guard placeholder.
+ * Auth guard.
  *
- * TODO(Phase 3): read isAuthenticated / isLoading from useAuth, render a
- * loading state while the Supabase session is restoring, and
- * <Navigate to="/login" replace /> when the user is not authenticated.
- * For now every child renders so navigation is testable.
+ * - session still restoring -> full page spinner (no flicker, no redirect loop)
+ * - signed out              -> /login, remembering where the user was headed
+ * - profile not checked yet -> check it, spinner meanwhile
+ * - no profile, not skipped -> /onboarding
+ * - otherwise               -> render the page
  */
 function RequireAuth({ children }: { children: ReactNode }) {
+  const {
+    isAuthenticated,
+    isLoading,
+    hasProfile,
+    skippedOnboarding,
+    checkProfile,
+  } = useAuth()
+  const location = useLocation()
+
+  useEffect(() => {
+    if (isAuthenticated && hasProfile === null) {
+      void checkProfile()
+    }
+  }, [isAuthenticated, hasProfile, checkProfile])
+
+  if (isLoading) return <FullPageLoader label="Restoring your session" />
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" state={{ from: location }} replace />
+  }
+
+  if (hasProfile === null) return <FullPageLoader label="Loading your profile" />
+
+  if (
+    hasProfile === false &&
+    !skippedOnboarding &&
+    location.pathname !== '/onboarding'
+  ) {
+    return <Navigate to="/onboarding" replace />
+  }
+
+  return <>{children}</>
+}
+
+/** Keeps signed-in users out of /login and /signup. */
+function RedirectIfAuthenticated({ children }: { children: ReactNode }) {
+  const { isAuthenticated, isLoading } = useAuth()
+
+  if (isLoading) return <FullPageLoader label="Restoring your session" />
+  if (isAuthenticated) return <Navigate to="/chat" replace />
+
   return <>{children}</>
 }
 
@@ -42,22 +98,46 @@ function Protected({ children }: { children: ReactNode }) {
 }
 
 export default function App() {
+  const { initialize } = useAuth()
+
+  // Restores the Supabase session and subscribes to auth changes exactly once.
+  useEffect(() => {
+    void initialize()
+  }, [initialize])
+
   return (
     <Routes>
       {/* Public — no app shell */}
       <Route path="/" element={<Landing />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/signup" element={<Signup />} />
+      <Route
+        path="/login"
+        element={
+          <RedirectIfAuthenticated>
+            <Login />
+          </RedirectIfAuthenticated>
+        }
+      />
+      <Route
+        path="/signup"
+        element={
+          <RedirectIfAuthenticated>
+            <Signup />
+          </RedirectIfAuthenticated>
+        }
+      />
 
-      {/* Protected — rendered inside the sidebar shell */}
+      {/* Protected, but deliberately outside the sidebar shell: onboarding is
+          a focused single-purpose page. */}
       <Route
         path="/onboarding"
         element={
-          <Protected>
+          <RequireAuth>
             <Onboarding />
-          </Protected>
+          </RequireAuth>
         }
       />
+
+      {/* Protected — rendered inside the sidebar shell */}
       <Route
         path="/chat"
         element={
