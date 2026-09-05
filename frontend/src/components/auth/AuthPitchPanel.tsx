@@ -10,10 +10,10 @@ const FEATURES = [
 /** Deep teal pitch panel shown beside the login and signup forms. */
 export default function AuthPitchPanel() {
   return (
-    <div className="hidden flex-col justify-between bg-teal-deep p-8 md:flex">
+    <div className="flex flex-col justify-between gap-3 bg-teal-deep p-5 md:gap-0 md:p-8">
       <Logo size={32} variant="light" />
 
-      <div className="py-6">
+      <div className="hidden py-6 md:block">
         <h2 className="font-serif text-[22px] font-medium leading-snug text-white">
           Your applications,
           <br />
@@ -34,7 +34,7 @@ export default function AuthPitchPanel() {
         </ul>
       </div>
 
-      <p className="text-[11px] text-teal-soft">
+      <p className="text-[12px] text-teal-soft md:text-[11px]">
         Free during beta. No credit card required.
       </p>
     </div>

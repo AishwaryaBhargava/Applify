@@ -5,6 +5,10 @@ export default {
     extend: {
       // The sidebar becomes a slide-over below this width.
       screens: {
+        // The narrowest phones (320px) get one step of their own, below
+        // Tailwind's `sm`, for the few places two columns simply do not fit.
+        xs: '360px',
+        // The sidebar becomes a slide-over below this width.
         nav: '900px',
       },
       colors: {

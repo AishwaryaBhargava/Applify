@@ -72,7 +72,7 @@ function EmptyState({ isFiltered }: { isFiltered: boolean }) {
       </p>
       <Link
         to="/chat"
-        className="mt-4 inline-block rounded-btn bg-coral px-4 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+        className="mt-4 inline-flex min-h-[44px] items-center rounded-btn bg-coral px-4 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
       >
         Start a job chat
       </Link>
@@ -108,7 +108,13 @@ export default function TrackerTable({
                   <th
                     key={column}
                     scope="col"
-                    className="px-4 py-3 text-[11px] font-medium tracking-[0.8px] text-text-muted"
+                    className={`whitespace-nowrap px-4 py-3 text-[11px] font-medium tracking-[0.8px] text-text-muted ${
+                      column === 'Job title'
+                        ? 'min-w-[220px]'
+                        : column === 'Company'
+                          ? 'min-w-[160px]'
+                          : ''
+                    }`}
                   >
                     {column.toUpperCase()}
                   </th>

@@ -27,7 +27,7 @@ function Card({
   children: ReactNode
 }) {
   return (
-    <section className="rounded-card border border-border bg-card p-5 md:p-6">
+    <section className="rounded-card border border-border bg-card p-4 sm:p-5 md:p-6">
       <h2 className="font-serif text-[17px] font-medium text-teal-ink">
         {title}
       </h2>
@@ -48,7 +48,7 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
       <span className="text-[12px] font-medium tracking-[0.4px] text-text-muted">
         {label}
       </span>
-      <span className="text-[13px] text-text-primary">{value}</span>
+      <span className="break-words text-[13px] text-text-primary">{value}</span>
     </div>
   )
 }
@@ -118,7 +118,7 @@ export default function Settings() {
         onMenu={toggleSidebar}
       />
 
-      <div className="flex-1 overflow-y-auto px-6 py-6 md:px-8">
+      <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6 md:px-8">
         <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4">
           <Card title="Account">
             <div className="flex flex-col">
@@ -132,7 +132,7 @@ export default function Settings() {
               type="button"
               onClick={() => void handleSignOut()}
               disabled={isSubmitting}
-              className="mt-4 flex items-center gap-2 rounded-btn border border-border-input bg-card px-4 py-2 text-[13px] font-medium text-text-primary transition-colors hover:border-teal-soft hover:text-teal-ink disabled:opacity-60"
+              className="mt-4 flex min-h-[42px] items-center gap-2 rounded-btn border border-border-input bg-card px-4 py-2 text-[13px] font-medium text-text-primary transition-colors hover:border-teal-soft hover:text-teal-ink disabled:opacity-60"
             >
               {isSubmitting && <Spinner size={14} />}
               {isSubmitting ? 'Signing out...' : 'Sign out'}
@@ -143,16 +143,16 @@ export default function Settings() {
             title="Profile"
             description="Your profile powers every analysis."
           >
-            <div className="flex flex-wrap items-center gap-4">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-0 sm:gap-4">
               <Link
                 to="/profile"
-                className="text-[13px] font-medium text-teal-deep underline underline-offset-2 hover:text-teal-ink"
+                className="flex min-h-[40px] items-center text-[13px] font-medium text-teal-deep underline underline-offset-2 hover:text-teal-ink sm:min-h-0"
               >
                 View profile
               </Link>
               <Link
                 to="/onboarding"
-                className="text-[13px] font-medium text-teal-deep underline underline-offset-2 hover:text-teal-ink"
+                className="flex min-h-[40px] items-center text-[13px] font-medium text-teal-deep underline underline-offset-2 hover:text-teal-ink sm:min-h-0"
               >
                 Re-upload resume
               </Link>
@@ -163,7 +163,7 @@ export default function Settings() {
             title="Preferences"
             description="Which analysis a new job chat highlights. Nothing runs until you press the button — the depth is a cost and latency choice, so it stays yours."
           >
-            <fieldset>
+            <fieldset className="relative">
               <legend className="sr-only">Default analysis type</legend>
               <div className="grid gap-3 sm:grid-cols-2">
                 {ANALYSIS_OPTIONS.map(({ value, label, hint, Icon }) => {
@@ -254,7 +254,7 @@ export default function Settings() {
             <button
               type="button"
               onClick={() => setConfirmingDelete(true)}
-              className="mt-4 rounded-btn border border-coral/40 bg-card px-4 py-2 text-[13px] font-medium text-coral-ink transition-colors hover:bg-coral-light"
+              className="mt-4 min-h-[42px] rounded-btn border border-coral/40 bg-card px-4 py-2 text-[13px] font-medium text-coral-ink transition-colors hover:bg-coral-light"
             >
               Delete my account
             </button>

@@ -72,14 +72,17 @@ export default function Sidebar() {
         ].join(' ')}
       >
         <div className="flex items-center justify-between px-4 py-4">
-          <Link to="/">
+          {/* Home inside the app is the chat workspace, not the marketing
+              page: sending a signed-in user to the pitch reads as being
+              logged out. */}
+          <Link to="/chat" aria-label="Applify home" className="flex min-h-[40px] items-center">
             <Logo size={30} />
           </Link>
           <button
             type="button"
             onClick={closeSidebar}
             aria-label="Close menu"
-            className="text-text-muted hover:text-text-primary nav:hidden"
+            className="-mr-2 flex h-10 w-10 items-center justify-center rounded-input text-text-muted hover:bg-surface-warm hover:text-text-primary nav:hidden"
           >
             <X size={18} />
           </button>
@@ -120,7 +123,7 @@ export default function Sidebar() {
               type="button"
               onClick={handleSignOut}
               disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-input px-1 py-1 text-[12px] text-text-muted hover:bg-surface-warm hover:text-text-primary disabled:opacity-60"
+              className="flex min-h-[40px] items-center gap-2 rounded-input px-1 py-1 text-[12px] text-text-muted hover:bg-surface-warm hover:text-text-primary disabled:opacity-60 nav:min-h-0"
             >
               <LogOut size={14} />
               {isSubmitting ? 'Signing out...' : 'Sign out'}

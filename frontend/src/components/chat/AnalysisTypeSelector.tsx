@@ -35,7 +35,7 @@ export default function AnalysisTypeSelector({
   preferred = null,
 }: AnalysisTypeSelectorProps) {
   const yourDefault = (
-    <span className="rounded-pill bg-teal-light px-2 py-[2px] text-[10px] font-medium text-teal-ink">
+    <span className="flex-shrink-0 rounded-pill bg-teal-light px-2 py-[2px] text-[11px] font-medium text-teal-ink sm:text-[10px]">
       Your default
     </span>
   )
@@ -53,12 +53,12 @@ export default function AnalysisTypeSelector({
         <p className="mt-1 flex-1 text-[12px] leading-relaxed text-text-secondary">
           A fit score, three strengths, three gaps, and a one-line verdict.
         </p>
-        <p className="mt-2 text-[11px] text-text-faint">About 3 seconds · Groq</p>
+        <p className="mt-2 text-[12px] text-text-faint sm:text-[11px]">About 3 seconds · Groq</p>
         <button
           type="button"
           onClick={() => onSelect('quick')}
           disabled={disabled}
-          className="mt-3 flex items-center justify-center gap-2 rounded-btn bg-teal-deep px-3 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+          className="mt-3 flex min-h-[42px] items-center justify-center gap-2 rounded-btn bg-teal-deep px-3 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
         >
           {running === 'quick' && <Spinner size={14} className="text-white" />}
           {running === 'quick' ? 'Analysing...' : 'Run quick snapshot'}
@@ -77,14 +77,14 @@ export default function AnalysisTypeSelector({
           Skill by skill, with the reasoning behind every gap and what to do
           about it.
         </p>
-        <p className="mt-2 text-[11px] text-text-faint">
+        <p className="mt-2 text-[12px] text-text-faint sm:text-[11px]">
           About 15 seconds · GPT-4o
         </p>
         <button
           type="button"
           onClick={() => onSelect('detailed')}
           disabled={disabled}
-          className="mt-3 flex items-center justify-center gap-2 rounded-btn bg-coral px-3 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+          className="mt-3 flex min-h-[42px] items-center justify-center gap-2 rounded-btn bg-coral px-3 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
         >
           {running === 'detailed' && <Spinner size={14} className="text-white" />}
           {running === 'detailed' ? 'Analysing...' : 'Run detailed breakdown'}

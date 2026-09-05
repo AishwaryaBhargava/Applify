@@ -21,18 +21,18 @@ export default function JobDescriptionPanel({
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-[12px] font-medium text-text-secondary"
+        className="flex min-h-[44px] w-full items-center gap-2 px-3.5 py-2.5 text-left text-[12px] font-medium text-text-secondary sm:min-h-0"
       >
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         <FileText size={14} className="text-text-muted" />
         Job description
-        <span className="ml-auto text-[11px] font-normal text-text-faint">
+        <span className="ml-auto flex-shrink-0 text-[12px] font-normal text-text-faint sm:text-[11px]">
           {jdText.trim().split(/\s+/).length} words
         </span>
       </button>
 
       {open && (
-        <div className="max-h-72 overflow-y-auto whitespace-pre-wrap border-t border-border px-3.5 py-3 text-[12px] leading-relaxed text-text-secondary">
+        <div className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words border-t border-border px-3.5 py-3 text-[12px] leading-relaxed text-text-secondary">
           {jdText}
         </div>
       )}

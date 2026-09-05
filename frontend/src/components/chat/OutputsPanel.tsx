@@ -65,12 +65,12 @@ export default function OutputsPanel({
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-[12px] font-medium text-text-secondary"
+        className="flex min-h-[44px] w-full items-center gap-2 px-3.5 py-2.5 text-left text-[12px] font-medium text-text-secondary sm:min-h-0"
       >
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         <FileText size={14} className="text-text-muted" />
         Generated outputs
-        <span className="ml-auto text-[11px] font-normal text-text-faint">
+        <span className="ml-auto flex-shrink-0 text-[12px] font-normal text-text-faint sm:text-[11px]">
           {outputs.length}
         </span>
       </button>
@@ -91,7 +91,7 @@ export default function OutputsPanel({
                       setExpandedId(expanded ? null : output.id)
                     }
                     aria-expanded={expanded}
-                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    className="flex min-h-[44px] min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-left sm:min-h-0 sm:flex-nowrap"
                   >
                     <span
                       className={`inline-flex flex-shrink-0 items-center gap-1.5 rounded-pill px-2 py-[3px] text-[11px] font-medium ${meta.className}`}
@@ -100,7 +100,7 @@ export default function OutputsPanel({
                       {meta.label}
                     </span>
                     <span
-                      className="truncate text-[11px] text-text-faint"
+                      className="truncate text-[12px] text-text-faint sm:text-[11px]"
                       title={absoluteDateTime(output.created_at)}
                     >
                       {relativeDate(output.created_at)}
@@ -117,7 +117,7 @@ export default function OutputsPanel({
                           output.content,
                         )
                       }
-                      className="flex-shrink-0 text-text-faint hover:text-text-secondary"
+                      className="-mr-1.5 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-input text-text-faint hover:text-text-secondary sm:mr-0 sm:h-auto sm:w-auto"
                     >
                       <Download size={13} />
                     </button>
@@ -125,7 +125,7 @@ export default function OutputsPanel({
                 </div>
 
                 {expanded && (
-                  <div className="md-body max-h-72 overflow-y-auto border-t border-border bg-surface px-3.5 py-3 text-[12px] leading-relaxed text-text-secondary">
+                  <div className="md-body max-h-72 overflow-y-auto overflow-x-hidden break-words border-t border-border bg-surface px-3.5 py-3 text-[13px] leading-relaxed text-text-secondary sm:text-[12px]">
                     <ReactMarkdown>{output.content}</ReactMarkdown>
                   </div>
                 )}

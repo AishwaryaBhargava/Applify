@@ -43,7 +43,7 @@ export default function ProfileSection({
   const flashVisible = status === 'saving' || status === 'saved'
 
   return (
-    <section className="rounded-card border border-border bg-card p-5">
+    <section className="rounded-card border border-border bg-card p-4 sm:p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-baseline gap-2">
@@ -60,14 +60,14 @@ export default function ProfileSection({
             </span>
           </div>
           {description && (
-            <p className="mt-0.5 text-[12px] text-text-muted">{description}</p>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-text-muted">{description}</p>
           )}
         </div>
 
         <button
           type="button"
           onClick={onToggleEdit}
-          className={`flex flex-shrink-0 items-center gap-1.5 rounded-btn border px-3 py-1.5 text-[12px] font-medium transition-colors ${
+          className={`flex min-h-[40px] flex-shrink-0 items-center gap-1.5 rounded-btn border px-3 py-1.5 text-[12px] font-medium transition-colors sm:min-h-0 ${
             isEditing
               ? 'border-teal-medium bg-teal-light text-teal-ink'
               : 'border-border-input bg-card text-text-secondary hover:border-teal-soft hover:text-teal-ink'

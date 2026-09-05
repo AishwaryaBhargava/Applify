@@ -13,11 +13,11 @@ export default function Login() {
   useEffect(() => clearError, [clearError])
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-bg p-6">
+    <div className="flex min-h-dvh items-center justify-center bg-bg p-4 sm:p-6">
       <div className="grid w-full max-w-3xl overflow-hidden rounded-panel border border-border bg-card md:grid-cols-[220px_1fr]">
         <AuthPitchPanel />
 
-        <div className="bg-card p-8">
+        <div className="bg-card p-6 sm:p-8">
           <h1 className="font-serif text-xl font-medium text-teal-ink">
             Welcome back
           </h1>
@@ -31,9 +31,9 @@ export default function Login() {
             <span className="h-px flex-1 bg-border" />
           </div>
           <GoogleButton />
-          <p className="mt-4 text-center text-[12px] text-text-muted">
+          <p className="mt-4 text-center text-[13px] text-text-muted">
             Don&apos;t have an account?{' '}
-            <Link to="/signup" className="font-medium text-teal-deep">
+            <Link to="/signup" className="inline-flex min-h-[40px] items-center font-medium text-teal-deep underline-offset-2 hover:underline sm:min-h-0">
               Sign up
             </Link>
           </p>

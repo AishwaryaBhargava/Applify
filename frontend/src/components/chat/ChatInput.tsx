@@ -67,7 +67,7 @@ export default function ChatInput({
     setValue(event.target.value)
 
   return (
-    <div className="border-t border-border bg-bg px-4 py-3 md:px-6 md:py-4">
+    <div className="flex-shrink-0 border-t border-border bg-bg px-3 py-3 sm:px-4 md:px-6 md:py-4">
       <div className="mx-auto flex max-w-3xl items-end gap-2">
         <textarea
           ref={textareaRef}
@@ -78,14 +78,14 @@ export default function ChatInput({
           disabled={blocked}
           placeholder={placeholder}
           aria-label="Message"
-          className="max-h-[148px] min-h-[42px] flex-1 resize-none rounded-input border border-border-input bg-card px-3.5 py-2.5 text-[13px] leading-relaxed outline-none focus:border-teal-deep disabled:opacity-60"
+          className="max-h-[148px] min-h-[44px] min-w-0 flex-1 resize-none rounded-input border border-border-input bg-card px-3.5 py-2.5 text-[16px] leading-relaxed outline-none focus:border-teal-deep disabled:opacity-60 sm:min-h-[42px] sm:text-[13px]"
         />
 
         {isStreaming && onStop && (
           <button
             type="button"
             onClick={onStop}
-            className="flex h-[42px] items-center gap-1.5 rounded-btn border border-border-input bg-card px-3 text-[12px] font-medium text-text-secondary hover:border-coral hover:text-coral"
+            className="flex h-[44px] flex-shrink-0 items-center gap-1.5 rounded-btn border border-border-input bg-card px-3 text-[12px] font-medium text-text-secondary hover:border-coral hover:text-coral sm:h-[42px]"
           >
             <Square size={12} fill="currentColor" />
             Stop
@@ -97,12 +97,14 @@ export default function ChatInput({
           onClick={submit}
           disabled={blocked || !value.trim()}
           aria-label="Send message"
-          className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-btn bg-coral text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+          className="flex h-[44px] w-[44px] flex-shrink-0 items-center justify-center rounded-btn bg-coral text-white transition-opacity hover:opacity-90 disabled:opacity-40 sm:h-[42px] sm:w-[42px]"
         >
           <Send size={16} />
         </button>
       </div>
-      <p className="mx-auto mt-1.5 max-w-3xl text-[11px] text-text-faint">
+      {/* The keyboard hint is for keyboards: on a phone there is no Shift+Enter
+          and the line only costs vertical room the thread wants. */}
+      <p className="mx-auto mt-1.5 hidden max-w-3xl text-[11px] text-text-faint sm:block">
         Enter to send · Shift + Enter for a new line
       </p>
     </div>

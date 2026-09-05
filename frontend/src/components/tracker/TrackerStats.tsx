@@ -50,18 +50,18 @@ const TILES: Tile[] = [
 /** The summary row above the table, drawn like the landing feature cards. */
 export default function TrackerStats({ entries }: TrackerStatsProps) {
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
       {TILES.map(({ label, icon: Icon, iconClass, count }) => (
         <article
           key={label}
-          className="rounded-card border border-border bg-card p-4"
+          className="rounded-card border border-border bg-card p-3.5 sm:p-4"
         >
           <div
             className={`mb-2.5 flex h-8 w-8 items-center justify-center rounded-btn ${iconClass}`}
           >
             <Icon size={16} />
           </div>
-          <div className="font-serif text-2xl font-medium text-teal-ink">
+          <div className="font-serif text-[22px] font-medium text-teal-ink sm:text-2xl">
             {count(entries)}
           </div>
           <div className="mt-0.5 text-[12px] text-text-secondary">{label}</div>

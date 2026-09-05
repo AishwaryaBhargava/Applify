@@ -75,7 +75,7 @@ export default function OutputActions({
   )
 
   return (
-    <div className="border-t border-border bg-bg px-4 pt-3 md:px-6">
+    <div className="max-h-[45%] flex-shrink-0 overflow-y-auto border-t border-border bg-bg px-3 pt-3 sm:px-4 md:px-6">
       <div className="mx-auto max-w-3xl">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-medium tracking-[0.8px] text-text-muted">
@@ -92,7 +92,7 @@ export default function OutputActions({
                   : onGenerate(type)
               }
               aria-expanded={type === 'answer' ? askOpen : undefined}
-              className={`flex items-center gap-1.5 rounded-pill px-2.5 py-[5px] text-[12px] font-medium transition-colors disabled:opacity-50 ${className}`}
+              className={`flex min-h-[40px] items-center gap-1.5 rounded-pill px-3 py-[5px] text-[12px] font-medium transition-colors disabled:opacity-50 sm:min-h-0 sm:px-2.5 ${className}`}
             >
               <Icon size={13} />
               {label}
@@ -108,7 +108,7 @@ export default function OutputActions({
             <div className="mb-2 flex items-center justify-between">
               <label
                 htmlFor="application-question"
-                className="text-[11px] font-medium tracking-[0.8px] text-text-muted"
+                className="text-[12px] font-medium tracking-[0.8px] text-text-muted sm:text-[11px]"
               >
                 APPLICATION QUESTION
               </label>
@@ -116,7 +116,7 @@ export default function OutputActions({
                 type="button"
                 onClick={() => setAskOpen(false)}
                 aria-label="Close question form"
-                className="text-text-faint hover:text-text-secondary"
+                className="-mr-2 -mt-1 flex h-10 w-10 items-center justify-center rounded-input text-text-faint hover:text-text-secondary sm:-mr-1 sm:h-8 sm:w-8"
               >
                 <X size={14} />
               </button>
@@ -128,7 +128,7 @@ export default function OutputActions({
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
               placeholder="Paste the application question"
-              className="w-full resize-y rounded-input border border-border-input bg-card px-3 py-2 text-[13px] leading-relaxed outline-none focus:border-teal-deep"
+              className="w-full resize-y rounded-input border border-border-input bg-card px-3 py-2 text-[16px] leading-relaxed outline-none focus:border-teal-deep sm:text-[13px]"
             />
 
             <input
@@ -136,14 +136,14 @@ export default function OutputActions({
               value={emphasis}
               onChange={(event) => setEmphasis(event.target.value)}
               placeholder="Anything to emphasise? (optional)"
-              className="mt-2 w-full rounded-input border border-border-input bg-card px-3 py-2 text-[13px] outline-none focus:border-teal-deep"
+              className="mt-2 min-h-[44px] w-full rounded-input border border-border-input bg-card px-3 py-2 text-[16px] outline-none focus:border-teal-deep sm:min-h-0 sm:text-[13px]"
             />
 
             <div className="mt-2.5 flex justify-end">
               <button
                 type="submit"
                 disabled={disabled || !question.trim()}
-                className="rounded-btn bg-coral px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+                className="min-h-[40px] rounded-btn bg-coral px-4 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40 sm:min-h-0 sm:px-3.5"
               >
                 Draft an answer
               </button>

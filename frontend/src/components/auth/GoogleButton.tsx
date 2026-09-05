@@ -33,7 +33,7 @@ export default function GoogleButton({
       type="button"
       onClick={handleClick}
       disabled={isSubmitting}
-      className="flex w-full items-center justify-center gap-2 rounded-btn border border-border-input bg-card px-4 py-2.5 text-[13px] font-medium text-text-primary hover:bg-surface disabled:opacity-60"
+      className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-btn border border-border-input bg-card px-4 py-2.5 text-[13px] font-medium text-text-primary hover:bg-surface disabled:opacity-60"
     >
       {isSubmitting ? (
         <Spinner size={14} />

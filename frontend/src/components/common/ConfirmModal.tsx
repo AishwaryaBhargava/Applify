@@ -55,13 +55,13 @@ export default function ConfirmModal({
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onCancel?.()
       }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/20 p-4"
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="w-full max-w-sm rounded-panel border border-border bg-card p-6"
+        className="my-auto max-h-[92dvh] w-full max-w-sm overflow-y-auto rounded-panel border border-border bg-card p-5 text-left sm:p-6"
       >
         <h2
           id={titleId}
@@ -74,19 +74,19 @@ export default function ConfirmModal({
             {description}
           </p>
         )}
-        <div className="mt-6 flex justify-end gap-2">
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="rounded-btn border border-border-input bg-card px-4 py-2 text-[13px] font-medium text-text-primary transition-colors hover:border-teal-soft hover:text-teal-ink"
+            className="min-h-[42px] rounded-btn border border-border-input bg-card px-4 py-2 text-[13px] font-medium text-text-primary transition-colors hover:border-teal-soft hover:text-teal-ink"
           >
             {cancelLabel}
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className={`rounded-btn px-4 py-2 text-[13px] font-medium text-white transition-opacity ${confirmClasses}`}
+            className={`min-h-[42px] rounded-btn px-4 py-2 text-[13px] font-medium text-white transition-opacity ${confirmClasses}`}
           >
             {confirmLabel}
           </button>

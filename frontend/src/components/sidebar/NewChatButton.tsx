@@ -47,9 +47,9 @@ export default function NewChatButton({
   const base =
     'flex items-center justify-center gap-2 rounded-btn bg-coral font-medium text-white transition-opacity hover:opacity-90'
   const sizing = {
-    sidebar: 'w-full px-3 py-2.5 text-[13px]',
-    inline: 'px-5 py-2.5 text-[14px]',
-    compact: 'w-full px-3 py-2 text-[12px]',
+    sidebar: 'min-h-[42px] w-full px-3 py-2.5 text-[13px]',
+    inline: 'min-h-[44px] px-5 py-2.5 text-[14px]',
+    compact: 'min-h-[40px] w-full px-3 py-2 text-[12px]',
   }[variant]
 
   return (

@@ -111,7 +111,7 @@ function ExperienceView({ entry }: { entry: WorkExperience }) {
           {joinMeta([entry.company, entry.location])}
         </p>
       )}
-      {period && <p className="mt-0.5 text-[11px] text-text-muted">{period}</p>}
+      {period && <p className="mt-0.5 text-[12px] text-text-muted sm:text-[11px]">{period}</p>}
       {(entry.highlights ?? []).length > 0 && (
         <ul className="mt-2 list-disc space-y-1 pl-4 text-[13px] leading-relaxed text-text-primary marker:text-teal-soft">
           {(entry.highlights ?? []).map((highlight, index) => (
@@ -177,7 +177,7 @@ function EducationView({ entry }: { entry: Education }) {
           {joinMeta([entry.institution, entry.field])}
         </p>
       )}
-      {period && <p className="mt-0.5 text-[11px] text-text-muted">{period}</p>}
+      {period && <p className="mt-0.5 text-[12px] text-text-muted sm:text-[11px]">{period}</p>}
       {text(entry.details) && (
         <p className="mt-1.5 text-[13px] leading-relaxed text-text-primary">
           {entry.details}
@@ -317,7 +317,7 @@ function ProjectView({ entry }: { entry: Project }) {
             href={entry.link ?? undefined}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1 text-[12px] text-teal-deep underline-offset-2 hover:underline"
+            className="inline-flex min-h-[40px] min-w-[44px] items-center gap-1 text-[12px] text-teal-deep underline-offset-2 hover:underline sm:min-h-0 sm:min-w-0"
           >
             <ExternalLink size={11} />
             Open
@@ -334,7 +334,7 @@ function ProjectView({ entry }: { entry: Project }) {
           {(entry.technologies ?? []).map((tech, index) => (
             <li
               key={`${tech}-${index}`}
-              className="rounded-pill bg-teal-light px-2 py-[3px] text-[11px] text-teal-ink"
+              className="rounded-pill bg-teal-light px-2 py-[3px] text-[12px] text-teal-ink sm:text-[11px]"
             >
               {tech}
             </li>
@@ -422,7 +422,7 @@ function SectionGroup({
 
 function EmptyProfile() {
   return (
-    <div className="rounded-card border border-border bg-card px-6 py-14 text-center">
+    <div className="rounded-card border border-border bg-card px-5 py-12 text-center sm:px-6 sm:py-14">
       <h2 className="font-serif text-[20px] font-medium text-teal-ink">
         No profile yet
       </h2>
@@ -432,7 +432,7 @@ function EmptyProfile() {
       </p>
       <Link
         to="/onboarding"
-        className="mt-6 inline-flex items-center gap-2 rounded-btn bg-coral px-5 py-2.5 text-[14px] font-medium text-white transition-opacity hover:opacity-95"
+        className="mt-6 inline-flex min-h-[44px] items-center gap-2 rounded-btn bg-coral px-5 py-2.5 text-[14px] font-medium text-white transition-opacity hover:opacity-95"
       >
         <UploadCloud size={16} />
         Upload your resume
@@ -484,14 +484,14 @@ export default function Profile() {
         actions={
           <Link
             to="/onboarding"
-            className="rounded-btn border border-border-input bg-card px-3.5 py-2 text-[13px] font-medium text-text-primary transition-colors hover:border-teal-soft hover:text-teal-ink"
+            className="flex min-h-[40px] items-center whitespace-nowrap rounded-btn border border-border-input bg-card px-3 py-2 text-[13px] font-medium text-text-primary transition-colors hover:border-teal-soft hover:text-teal-ink sm:px-3.5"
           >
             Re-upload resume
           </Link>
         }
       />
 
-      <div className="flex-1 overflow-y-auto px-6 py-6 md:px-8">
+      <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6 md:px-8">
         <div className="mx-auto flex w-full max-w-[900px] flex-col gap-4">
           {isLoading && !parsed && <ProfileSkeleton />}
 
@@ -501,7 +501,7 @@ export default function Profile() {
               <button
                 type="button"
                 onClick={() => void fetchProfile()}
-                className="mt-3 rounded-btn border border-coral/40 px-3 py-1.5 text-[12px] font-medium text-coral-ink hover:bg-coral-light"
+                className="mt-3 min-h-[40px] rounded-btn border border-coral/40 px-3 py-1.5 text-[12px] font-medium text-coral-ink hover:bg-coral-light"
               >
                 Try again
               </button>

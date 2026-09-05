@@ -17,7 +17,7 @@ export default function ToastHost() {
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-[calc(100vw-2rem)] max-w-sm flex-col gap-2"
+      className="pointer-events-none fixed inset-x-4 bottom-4 z-[60] ml-auto flex max-w-sm flex-col gap-2"
     >
       {toasts.map((toast) => (
         <div key={toast.id} className="pointer-events-auto">

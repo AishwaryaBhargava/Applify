@@ -41,7 +41,14 @@ export default function TrackerFilters({
   const filters: TrackerFilter[] = ['all', ...STATUS_ORDER]
 
   return (
-    <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by status">
+    /* The pills scroll sideways on a phone rather than wrapping to three rows
+         that push the table below the fold. They wrap normally from 640px, where
+         they all fit. */
+    <div
+      className="-mx-4 flex snap-x gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0"
+      role="group"
+      aria-label="Filter by status"
+    >
       {filters.map((filter) => {
         const active = filter === value
         const label = filter === 'all' ? 'All' : STATUS_LABELS[filter]
@@ -53,7 +60,7 @@ export default function TrackerFilters({
             onClick={() => onChange(filter)}
             aria-pressed={active}
             className={[
-              'flex items-center gap-1.5 rounded-pill px-3 py-1.5 text-[12px] font-medium transition-colors',
+              'flex min-h-[40px] flex-shrink-0 snap-start items-center gap-1.5 rounded-pill px-3.5 py-1.5 text-[12px] font-medium transition-colors sm:min-h-0 sm:px-3',
               active
                 ? 'bg-teal-light text-teal-ink'
                 : 'border border-border bg-card text-text-secondary hover:bg-surface',

@@ -110,7 +110,7 @@ export default function ChatMessage({
   if (isUser) {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] whitespace-pre-wrap rounded-box rounded-br-[2px] bg-teal-deep px-3.5 py-2.5 text-[13px] leading-relaxed text-white">
+        <div className="max-w-[88%] overflow-hidden whitespace-pre-wrap break-words rounded-box rounded-br-[2px] bg-teal-deep px-3.5 py-2.5 text-[13px] leading-relaxed text-white sm:max-w-[80%]">
           {message.content}
         </div>
       </div>
@@ -130,7 +130,7 @@ export default function ChatMessage({
         </span>
       )}
 
-      <div className="max-w-[85%] rounded-box rounded-bl-[2px] bg-surface-warm px-3.5 py-2.5 text-[13px] leading-relaxed text-text-primary">
+      <div className="max-w-full overflow-hidden break-words rounded-box rounded-bl-[2px] bg-surface-warm px-3.5 py-2.5 text-[13px] leading-relaxed text-text-primary sm:max-w-[85%]">
         {isTyping ? (
           <TypingIndicator />
         ) : (
@@ -172,7 +172,7 @@ export default function ChatMessage({
             type="button"
             onClick={copy}
             aria-label="Copy message"
-            className="flex items-center gap-1 text-[11px] text-text-faint opacity-0 transition-opacity hover:text-text-secondary focus:opacity-100 group-hover:opacity-100"
+            className="flex min-h-[40px] items-center gap-1 text-[12px] text-text-faint transition-opacity hover:text-text-secondary focus:opacity-100 sm:min-h-0 sm:text-[11px] sm:opacity-0 sm:group-hover:opacity-100"
           >
             {copied ? <Check size={12} /> : <Copy size={12} />}
             {copied ? 'Copied' : 'Copy'}
@@ -183,7 +183,7 @@ export default function ChatMessage({
               type="button"
               onClick={download}
               aria-label="Download as markdown"
-              className="flex items-center gap-1 text-[11px] text-text-faint opacity-0 transition-opacity hover:text-text-secondary focus:opacity-100 group-hover:opacity-100"
+              className="flex min-h-[40px] items-center gap-1 text-[12px] text-text-faint transition-opacity hover:text-text-secondary focus:opacity-100 sm:min-h-0 sm:text-[11px] sm:opacity-0 sm:group-hover:opacity-100"
             >
               <Download size={12} />
               Download .md

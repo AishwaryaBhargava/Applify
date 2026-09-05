@@ -26,7 +26,7 @@ export default function TrackerRow({ entry, onStatusChange }: TrackerRowProps) {
       <td className="px-4 py-3">
         <Link
           to={`/chat/${entry.chat_id}`}
-          className="text-[13px] font-medium text-teal-ink hover:underline"
+          className="inline-flex min-h-[40px] items-center text-[13px] font-medium text-teal-ink hover:underline sm:min-h-0"
         >
           {entryTitle(entry)}
         </Link>

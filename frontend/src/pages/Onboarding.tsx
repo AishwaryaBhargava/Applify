@@ -17,8 +17,8 @@ export default function Onboarding() {
   }
 
   return (
-    <div className="min-h-screen bg-bg">
-      <div className="mx-auto flex w-full max-w-xl flex-col gap-6 px-6 py-12">
+    <div className="min-h-dvh bg-bg">
+      <div className="mx-auto flex w-full max-w-xl flex-col gap-6 px-5 py-8 sm:px-6 sm:py-12">
         <Logo size={34} />
 
         <div>
@@ -39,7 +39,7 @@ export default function Onboarding() {
         <button
           type="button"
           onClick={handleSkip}
-          className="text-center text-[13px] text-text-muted underline-offset-2 hover:text-text-primary hover:underline"
+          className="mx-auto flex min-h-[44px] items-center justify-center px-4 text-center text-[13px] text-text-muted underline-offset-2 hover:text-text-primary hover:underline"
         >
           Skip for now
         </button>

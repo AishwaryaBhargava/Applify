@@ -6,7 +6,7 @@ import AuthMessage from './AuthMessage'
 import Spinner from '../common/Spinner'
 
 const inputClass =
-  'w-full rounded-input border border-border-input bg-bg px-3 py-2.5 text-[13px] outline-none focus:border-teal-deep disabled:opacity-60'
+  'w-full min-h-[44px] rounded-input border border-border-input bg-bg px-3 py-2.5 text-[16px] outline-none focus:border-teal-deep disabled:opacity-60 sm:min-h-0 sm:text-[13px]'
 
 /** Email + password login form, wired to the auth store. */
 export default function LoginForm() {
@@ -97,7 +97,7 @@ export default function LoginForm() {
           aria-invalid={Boolean(fieldErrors.email)}
         />
         {fieldErrors.email && (
-          <p className="mt-1 text-[11px] text-coral-ink">{fieldErrors.email}</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-coral-ink sm:text-[11px]">{fieldErrors.email}</p>
         )}
       </div>
 
@@ -126,7 +126,7 @@ export default function LoginForm() {
           aria-invalid={Boolean(fieldErrors.password)}
         />
         {fieldErrors.password && (
-          <p className="mt-1 text-[11px] text-coral-ink">
+          <p className="mt-1 text-[12px] leading-relaxed text-coral-ink sm:text-[11px]">
             {fieldErrors.password}
           </p>
         )}
@@ -137,7 +137,7 @@ export default function LoginForm() {
           type="button"
           onClick={handleForgotPassword}
           disabled={isSubmitting}
-          className="text-[12px] text-teal-deep underline-offset-2 hover:underline disabled:opacity-60"
+          className="inline-flex min-h-[40px] items-center text-[12px] text-teal-deep underline-offset-2 hover:underline disabled:opacity-60 sm:min-h-0"
         >
           Forgot password?
         </button>
@@ -146,7 +146,7 @@ export default function LoginForm() {
       <button
         type="submit"
         disabled={isSubmitting}
-        className="mt-1 flex w-full items-center justify-center gap-2 rounded-btn bg-coral px-4 py-2.5 text-[14px] font-medium text-white transition-opacity hover:opacity-95 disabled:opacity-60"
+        className="mt-1 flex min-h-[46px] w-full items-center justify-center gap-2 rounded-btn bg-coral px-4 py-2.5 text-[14px] font-medium text-white transition-opacity hover:opacity-95 disabled:opacity-60"
       >
         {isSubmitting && <Spinner size={14} className="text-white" />}
         {isSubmitting ? 'Signing in...' : 'Sign in'}

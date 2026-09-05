@@ -30,7 +30,7 @@ export default function StatusPicker({
         disabled={disabled}
         onChange={(event) => onChange?.(event.target.value as TrackerStatus)}
         aria-label="Application status"
-        className="cursor-pointer appearance-none rounded-pill bg-transparent py-[5px] pl-2.5 pr-7 text-inherit outline-none focus:ring-1 focus:ring-teal-deep disabled:cursor-default"
+        className="min-h-[40px] cursor-pointer appearance-none rounded-pill bg-transparent py-[5px] pl-3 pr-7 text-[16px] text-inherit outline-none focus:ring-1 focus:ring-teal-deep disabled:cursor-default sm:min-h-0 sm:pl-2.5 sm:text-inherit"
       >
         {STATUS_ORDER.map((status) => (
           <option key={status} value={status} className="bg-card text-text-primary">

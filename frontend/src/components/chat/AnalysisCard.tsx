@@ -48,9 +48,9 @@ export default function AnalysisCard({
   const heading = company ? `${title}, ${company}` : title
 
   return (
-    <section className="rounded-box border-hairline border-border bg-surface p-4">
+    <section className="rounded-box border-hairline border-border bg-surface p-3.5 sm:p-4">
       <header className="mb-3 flex items-start justify-between gap-3">
-        <h2 className="text-[13px] font-medium leading-snug text-teal-ink">
+        <h2 className="min-w-0 break-words text-[13px] font-medium leading-snug text-teal-ink">
           Fit analysis — {heading}
         </h2>
         <span className="flex-shrink-0 rounded-full bg-amber px-2.5 py-[3px] text-[12px] font-medium text-amber-ink">
@@ -60,7 +60,7 @@ export default function AnalysisCard({
 
       <div className="flex flex-col gap-3 sm:flex-row">
         <div className="flex-1">
-          <div className="mb-1.5 text-[10px] font-medium tracking-[0.8px] text-text-muted">
+          <div className="mb-1.5 text-[11px] font-medium tracking-[0.8px] text-text-muted sm:text-[10px]">
             STRENGTHS
           </div>
           {analysis.strengths.length ? (
@@ -68,7 +68,7 @@ export default function AnalysisCard({
               {analysis.strengths.map((strength) => (
                 <span
                   key={strength}
-                  className="rounded-pill bg-teal-light px-2 py-[3px] text-[11px] text-teal-ink"
+                  className="rounded-pill bg-teal-light px-2 py-[3px] text-[12px] leading-snug text-teal-ink sm:text-[11px]"
                 >
                   {strength}
                 </span>
@@ -80,7 +80,7 @@ export default function AnalysisCard({
         </div>
 
         <div className="flex-1">
-          <div className="mb-1.5 text-[10px] font-medium tracking-[0.8px] text-text-muted">
+          <div className="mb-1.5 text-[11px] font-medium tracking-[0.8px] text-text-muted sm:text-[10px]">
             GAPS
           </div>
           {analysis.gaps.length ? (
@@ -88,7 +88,7 @@ export default function AnalysisCard({
               {analysis.gaps.map((gap) => (
                 <span
                   key={gap}
-                  className="rounded-pill bg-coral-light px-2 py-[3px] text-[11px] text-coral-ink"
+                  className="rounded-pill bg-coral-light px-2 py-[3px] text-[12px] leading-snug text-coral-ink sm:text-[11px]"
                 >
                   {gap}
                 </span>
@@ -112,7 +112,7 @@ export default function AnalysisCard({
             type="button"
             onClick={() => setShowSkills((open) => !open)}
             aria-expanded={showSkills}
-            className="flex items-center gap-1.5 text-[12px] font-medium text-teal-deep hover:underline"
+            className="flex min-h-[40px] items-center gap-1.5 text-left text-[12px] font-medium text-teal-deep hover:underline sm:min-h-0"
           >
             {showSkills ? (
               <ChevronDown size={14} />
@@ -141,10 +141,10 @@ export default function AnalysisCard({
                         <th className="border-b border-border py-2 pr-3 font-medium">
                           You have
                         </th>
-                        <th className="border-b border-border py-2 pr-3 font-medium">
+                        <th className="min-w-[180px] border-b border-border py-2 pr-3 font-medium">
                           Evidence
                         </th>
-                        <th className="border-b border-border py-2 font-medium">
+                        <th className="min-w-[180px] border-b border-border py-2 font-medium">
                           Suggestion
                         </th>
                       </tr>
@@ -191,17 +191,17 @@ export default function AnalysisCard({
       )}
 
       {onRerun && (
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1">
           <button
             type="button"
             onClick={onRerun}
             disabled={isRerunning}
-            className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-teal-deep disabled:opacity-60"
+            className="flex min-h-[40px] items-center gap-1.5 text-[12px] text-text-muted hover:text-teal-deep disabled:opacity-60 sm:min-h-0"
           >
             {isRerunning ? <Spinner size={13} /> : <RefreshCw size={13} />}
             {isRerunning ? 'Re-running...' : 'Re-run analysis'}
           </button>
-          <span className="text-[11px] text-text-faint">
+          <span className="text-[12px] text-text-faint sm:text-[11px]">
             Replaces the saved result.
           </span>
         </div>

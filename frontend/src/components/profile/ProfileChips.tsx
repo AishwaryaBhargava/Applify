@@ -65,7 +65,7 @@ export default function ProfileChips({
           {values.map((value, index) => (
             <li
               key={`${value}-${index}`}
-              className={`flex max-w-full items-start gap-1.5 rounded-pill px-2.5 py-[5px] text-[12px] leading-relaxed ${toneClasses[tone]}`}
+              className={`flex max-w-full items-start gap-1.5 rounded-pill px-2.5 py-2 text-[12px] leading-relaxed sm:py-[5px] ${toneClasses[tone]}`}
             >
               <span className="min-w-0 break-words">{value}</span>
               {isEditing && (
@@ -73,7 +73,7 @@ export default function ProfileChips({
                   type="button"
                   aria-label={`Remove ${value}`}
                   onClick={() => onChange(values.filter((_, i) => i !== index))}
-                  className="mt-[3px] flex-shrink-0 opacity-60 hover:opacity-100"
+                  className="-my-1 -mr-1.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full opacity-60 hover:bg-black/5 hover:opacity-100 sm:my-0 sm:mr-0 sm:mt-[3px] sm:h-auto sm:w-auto"
                 >
                   <X size={12} />
                 </button>
@@ -92,12 +92,12 @@ export default function ProfileChips({
             onChange={(event) => setEntry(event.target.value)}
             onKeyDown={handleKeyDown}
             onBlur={commit}
-            className="min-w-0 flex-1 rounded-input border border-border-input bg-bg px-3 py-2 text-[13px] text-text-primary outline-none transition-colors placeholder:text-text-faint focus:border-teal-medium focus:bg-card"
+            className="min-h-[44px] min-w-0 flex-1 rounded-input border border-border-input bg-bg px-3 py-2 text-[16px] text-text-primary outline-none transition-colors placeholder:text-text-faint focus:border-teal-medium focus:bg-card sm:min-h-0 sm:text-[13px]"
           />
           <button
             type="button"
             onClick={commit}
-            className="flex flex-shrink-0 items-center gap-1 rounded-btn border border-border-input px-3 py-2 text-[12px] font-medium text-teal-deep transition-colors hover:border-teal-soft hover:bg-teal-light"
+            className="flex min-h-[44px] flex-shrink-0 items-center gap-1 rounded-btn border border-border-input px-3.5 py-2 text-[12px] font-medium text-teal-deep transition-colors hover:border-teal-soft hover:bg-teal-light sm:min-h-0"
           >
             <Plus size={13} />
             Add

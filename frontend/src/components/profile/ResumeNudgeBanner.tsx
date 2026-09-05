@@ -34,7 +34,7 @@ export default function ResumeNudgeBanner() {
   }
 
   return (
-    <div className="flex items-center gap-3 border-b border-amber/30 bg-amber-light px-6 py-2.5">
+    <div className="flex flex-shrink-0 items-center gap-2 border-b border-amber/30 bg-amber-light px-4 py-2 sm:gap-3 sm:px-6 sm:py-2.5">
       <p className="flex-1 text-[13px] leading-relaxed text-amber-ink">
         Upload your resume to get grounded analysis.{' '}
         <Link
@@ -48,7 +48,7 @@ export default function ResumeNudgeBanner() {
         type="button"
         onClick={dismiss}
         aria-label="Dismiss resume reminder"
-        className="flex-shrink-0 text-amber-ink/70 hover:text-amber-ink"
+        className="-mr-2 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-input text-amber-ink/70 hover:text-amber-ink sm:mr-0 sm:h-auto sm:w-auto"
       >
         <X size={15} />
       </button>

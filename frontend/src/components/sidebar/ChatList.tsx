@@ -70,7 +70,7 @@ export default function ChatList() {
                 onClick={closeSidebar}
                 className={({ isActive }) =>
                   [
-                    'block border-l-2 py-2.5 pl-3 pr-9 text-[12px] transition-colors',
+                    'block border-l-2 py-2.5 pl-3 pr-11 text-[12px] transition-colors nav:pr-9',
                     isActive
                       ? 'border-teal-deep bg-teal-light font-medium text-teal-ink'
                       : 'border-transparent text-text-muted hover:bg-surface-warm',
@@ -78,17 +78,20 @@ export default function ChatList() {
                 }
               >
                 <div className="truncate">{chat.title}</div>
-                <div className="mt-0.5 truncate text-[10px] text-text-faint">
+                <div className="mt-0.5 truncate text-[11px] text-text-faint nav:text-[10px]">
                   {chat.company ?? 'No company'}
                 </div>
               </NavLink>
 
+              {/* Always visible in the touch drawer: there is no hover on a
+                  phone, so an opacity-0 control is an invisible one. It fades
+                  back to hover-only once the sidebar is a desktop column. */}
               <button
                 type="button"
                 onClick={() => setPendingDelete(chat)}
                 aria-label={`Delete ${chat.title}`}
                 title="Delete chat"
-                className="absolute right-2 top-2.5 rounded-badge p-1 text-text-faint opacity-0 transition-opacity hover:bg-coral-light hover:text-coral-ink focus:opacity-100 group-hover:opacity-100"
+                className="absolute right-1 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-badge text-text-faint transition-opacity hover:bg-coral-light hover:text-coral-ink focus:opacity-100 nav:right-2 nav:top-2.5 nav:h-auto nav:w-auto nav:translate-y-0 nav:p-1 nav:opacity-0 nav:group-hover:opacity-100"
               >
                 <Trash2 size={13} />
               </button>

@@ -34,7 +34,7 @@ export default function ProfileCompleteness({
   const count = gaps.length
 
   return (
-    <section className="rounded-card border border-border bg-card px-5 py-4">
+    <section className="rounded-card border border-border bg-card px-4 py-4 sm:px-5">
       <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h2 className="font-serif text-[15px] font-medium text-teal-ink">
           Profile completeness

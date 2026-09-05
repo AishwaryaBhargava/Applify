@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { AlertCircle, MessageSquarePlus } from 'lucide-react'
+import { AlertCircle, MessageSquarePlus, Table2, User } from 'lucide-react'
 import TopBar from '../components/common/TopBar'
 import Badge from '../components/common/Badge'
 import Spinner from '../components/common/Spinner'
@@ -37,7 +37,10 @@ function ChatWelcome({ onMenu }: { onMenu: () => void }) {
         actions={<BackendStatus />}
         onMenu={onMenu}
       />
-      <div className="flex flex-1 items-center justify-center px-6 py-10">
+      {/* This is the app's home: the place the sidebar logo, `/`, and a fresh
+          sign-in all land. So it carries the primary action and a way on to
+          the other two places worth being, rather than being a dead end. */}
+      <div className="flex flex-1 items-center justify-center overflow-y-auto px-5 py-10 sm:px-6">
         <div className="max-w-md text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-btn bg-teal-light">
             <MessageSquarePlus size={22} className="text-teal-deep" />
@@ -51,6 +54,22 @@ function ChatWelcome({ onMenu }: { onMenu: () => void }) {
           </p>
           <div className="mt-6 flex justify-center">
             <NewChatButton variant="inline" />
+          </div>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-1 border-t border-border pt-5">
+            <Link
+              to="/profile"
+              className="flex min-h-[40px] items-center gap-1.5 text-[13px] font-medium text-teal-deep underline-offset-2 hover:underline"
+            >
+              <User size={14} />
+              Your profile
+            </Link>
+            <Link
+              to="/tracker"
+              className="flex min-h-[40px] items-center gap-1.5 text-[13px] font-medium text-teal-deep underline-offset-2 hover:underline"
+            >
+              <Table2 size={14} />
+              Application tracker
+            </Link>
           </div>
         </div>
       </div>

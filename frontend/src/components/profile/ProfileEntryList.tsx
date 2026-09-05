@@ -93,7 +93,7 @@ export default function ProfileEntryList<T>({
         {entries.map((entry, index) => (
           <div
             key={index}
-            className="rounded-box border border-border bg-surface px-4 py-3"
+            className="rounded-box border border-border bg-surface px-3.5 py-3 sm:px-4"
           >
             {renderView(entry, index)}
           </div>
@@ -107,7 +107,7 @@ export default function ProfileEntryList<T>({
       {entries.map((entry, index) => (
         <div
           key={index}
-          className="rounded-box border border-border bg-surface px-4 py-4"
+          className="rounded-box border border-border bg-surface px-3.5 py-4 sm:px-4"
         >
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {fields.map((field) => {
@@ -162,7 +162,7 @@ export default function ProfileEntryList<T>({
           <button
             type="button"
             onClick={() => onChange(entries.filter((_, i) => i !== index))}
-            className="mt-3 flex items-center gap-1.5 text-[12px] font-medium text-coral underline-offset-2 hover:underline"
+            className="mt-3 flex min-h-[40px] items-center gap-1.5 text-[12px] font-medium text-coral underline-offset-2 hover:underline sm:min-h-0"
           >
             <Trash2 size={13} />
             Remove entry
@@ -173,7 +173,7 @@ export default function ProfileEntryList<T>({
       <button
         type="button"
         onClick={() => onAdd([...entries, makeEmpty()])}
-        className="flex items-center justify-center gap-1.5 rounded-btn border border-dashed border-border-input px-3 py-2.5 text-[12px] font-medium text-teal-deep transition-colors hover:border-teal-soft hover:bg-teal-light"
+        className="flex min-h-[44px] items-center justify-center gap-1.5 rounded-btn border border-dashed border-border-input px-3 py-2.5 text-[12px] font-medium text-teal-deep transition-colors hover:border-teal-soft hover:bg-teal-light"
       >
         <Plus size={14} />
         {addLabel}

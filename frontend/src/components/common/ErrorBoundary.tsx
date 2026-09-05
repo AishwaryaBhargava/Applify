@@ -49,7 +49,7 @@ export default class ErrorBoundary extends Component<
     if (!this.state.hasError) return this.props.children
 
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-bg px-6 py-12 text-center">
+      <div className="flex min-h-dvh flex-col items-center justify-center bg-bg px-6 py-12 text-center">
         <Logo size={40} />
         <h1 className="mt-7 font-serif text-[26px] font-medium text-teal-ink">
           Something went wrong

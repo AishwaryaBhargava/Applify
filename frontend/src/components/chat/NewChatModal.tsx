@@ -75,7 +75,7 @@ export default function NewChatModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/20 p-0 sm:items-center sm:p-4"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose()
@@ -85,9 +85,9 @@ export default function NewChatModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="new-chat-title"
-        className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-panel border border-border bg-card"
+        className="flex max-h-[92dvh] w-full max-w-xl flex-col overflow-hidden rounded-t-panel border border-border bg-card text-left sm:max-h-[90dvh] sm:rounded-panel"
       >
-        <header className="flex items-start justify-between gap-3 border-b border-border px-6 py-4">
+        <header className="flex flex-shrink-0 items-start justify-between gap-3 border-b border-border px-5 py-4 sm:px-6">
           <div>
             <h2
               id="new-chat-title"
@@ -104,7 +104,7 @@ export default function NewChatModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="text-text-muted hover:text-text-primary"
+            className="-mr-2 -mt-1.5 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-input text-text-muted hover:bg-surface-warm hover:text-text-primary"
           >
             <X size={18} />
           </button>
@@ -112,7 +112,7 @@ export default function NewChatModal({
 
         <form
           onSubmit={handleSubmit}
-          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-5"
+          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-5 sm:px-6"
         >
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="flex flex-col gap-1.5">
@@ -124,7 +124,7 @@ export default function NewChatModal({
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
                 placeholder="Senior Product Designer"
-                className="rounded-input border border-border-input bg-card px-3 py-2 text-[13px] outline-none focus:border-teal-deep"
+                className="min-h-[44px] rounded-input border border-border-input bg-card px-3 py-2 text-[16px] outline-none focus:border-teal-deep sm:min-h-0 sm:text-[13px]"
               />
               {touched && titleError && (
                 <span className="text-[11px] text-coral-ink">{titleError}</span>
@@ -139,7 +139,7 @@ export default function NewChatModal({
                 value={company}
                 onChange={(event) => setCompany(event.target.value)}
                 placeholder="Stripe"
-                className="rounded-input border border-border-input bg-card px-3 py-2 text-[13px] outline-none focus:border-teal-deep"
+                className="min-h-[44px] rounded-input border border-border-input bg-card px-3 py-2 text-[16px] outline-none focus:border-teal-deep sm:min-h-0 sm:text-[13px]"
               />
             </label>
           </div>
@@ -151,15 +151,15 @@ export default function NewChatModal({
             <textarea
               value={jdText}
               onChange={(event) => setJdText(event.target.value)}
-              rows={10}
+              rows={6}
               placeholder="Paste the full posting — responsibilities, requirements, everything."
-              className="resize-y rounded-input border border-border-input bg-card px-3 py-2 text-[13px] leading-relaxed outline-none focus:border-teal-deep"
+              className="resize-y rounded-input border border-border-input bg-card px-3 py-2 text-[16px] leading-relaxed outline-none focus:border-teal-deep sm:text-[13px]"
             />
             <span className="flex items-center justify-between text-[11px]">
               <span className="text-coral-ink">
                 {touched && jdError ? jdError : ''}
               </span>
-              <span className="text-text-faint">
+              <span className="flex-shrink-0 text-[12px] text-text-faint sm:text-[11px]">
                 {trimmedJd.length} characters
               </span>
             </span>
@@ -171,18 +171,18 @@ export default function NewChatModal({
             </p>
           )}
 
-          <div className="flex justify-end gap-2 pt-1">
+          <div className="sticky bottom-0 -mx-5 flex justify-end gap-2 border-t border-border bg-card px-5 pb-1 pt-3 sm:-mx-6 sm:px-6">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-btn border border-border-input bg-card px-4 py-2 text-[13px] font-medium text-text-primary"
+              className="min-h-[42px] rounded-btn border border-border-input bg-card px-4 py-2 text-[13px] font-medium text-text-primary"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-btn bg-coral px-4 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+              className="flex min-h-[42px] items-center gap-2 rounded-btn bg-coral px-4 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
             >
               {isSubmitting && <Spinner size={14} className="text-white" />}
               {isSubmitting ? 'Creating...' : 'Create chat'}

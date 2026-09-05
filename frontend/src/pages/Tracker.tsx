@@ -47,7 +47,7 @@ export default function Tracker() {
             type="button"
             onClick={() => void fetchEntries({ force: true })}
             disabled={isLoading}
-            className="flex items-center gap-1.5 rounded-btn border border-border-input bg-card px-3 py-1.5 text-[12px] font-medium text-text-secondary hover:border-teal-soft hover:text-teal-deep disabled:opacity-60"
+            className="flex min-h-[40px] items-center gap-1.5 rounded-btn border border-border-input bg-card px-3 py-1.5 text-[12px] font-medium text-text-secondary hover:border-teal-soft hover:text-teal-deep disabled:opacity-60 sm:min-h-0"
           >
             {isLoading ? <Spinner size={13} /> : <RefreshCw size={13} />}
             Refresh
@@ -55,7 +55,7 @@ export default function Tracker() {
         }
       />
 
-      <div className="flex-1 overflow-y-auto px-6 py-6 md:px-8">
+      <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6 md:px-8">
         <div className="mx-auto flex max-w-5xl flex-col gap-5">
           <TrackerStats entries={entries} />
 

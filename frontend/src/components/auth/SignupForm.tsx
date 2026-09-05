@@ -10,7 +10,7 @@ import AuthMessage from './AuthMessage'
 import Spinner from '../common/Spinner'
 
 const inputClass =
-  'w-full rounded-input border border-border-input bg-bg px-3 py-2.5 text-[13px] outline-none focus:border-teal-deep disabled:opacity-60'
+  'w-full min-h-[44px] rounded-input border border-border-input bg-bg px-3 py-2.5 text-[16px] outline-none focus:border-teal-deep disabled:opacity-60 sm:min-h-0 sm:text-[13px]'
 
 interface FieldErrors {
   firstName?: string
@@ -94,7 +94,7 @@ export default function SignupForm() {
     <form className="flex flex-col gap-3.5" onSubmit={handleSubmit} noValidate>
       {error && <AuthMessage message={error} tone="error" />}
 
-      <div className="grid grid-cols-2 gap-2.5">
+      <div className="grid grid-cols-1 gap-2.5 xs:grid-cols-2">
         <div>
           <label
             className="mb-1.5 block text-[12px] font-medium text-text-primary"
@@ -117,7 +117,7 @@ export default function SignupForm() {
             aria-invalid={Boolean(fieldErrors.firstName)}
           />
           {fieldErrors.firstName && (
-            <p className="mt-1 text-[11px] text-coral-ink">
+            <p className="mt-1 text-[12px] leading-relaxed text-coral-ink sm:text-[11px]">
               {fieldErrors.firstName}
             </p>
           )}
@@ -144,7 +144,7 @@ export default function SignupForm() {
             aria-invalid={Boolean(fieldErrors.lastName)}
           />
           {fieldErrors.lastName && (
-            <p className="mt-1 text-[11px] text-coral-ink">
+            <p className="mt-1 text-[12px] leading-relaxed text-coral-ink sm:text-[11px]">
               {fieldErrors.lastName}
             </p>
           )}
@@ -174,7 +174,7 @@ export default function SignupForm() {
           aria-invalid={Boolean(fieldErrors.email)}
         />
         {fieldErrors.email && (
-          <p className="mt-1 text-[11px] text-coral-ink">{fieldErrors.email}</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-coral-ink sm:text-[11px]">{fieldErrors.email}</p>
         )}
       </div>
 
@@ -201,11 +201,11 @@ export default function SignupForm() {
           aria-invalid={Boolean(fieldErrors.password)}
         />
         {fieldErrors.password ? (
-          <p className="mt-1 text-[11px] text-coral-ink">
+          <p className="mt-1 text-[12px] leading-relaxed text-coral-ink sm:text-[11px]">
             {fieldErrors.password}
           </p>
         ) : (
-          <p className="mt-1 text-[11px] text-text-muted">
+          <p className="mt-1 text-[12px] text-text-muted sm:text-[11px]">
             At least {PASSWORD_MIN_LENGTH} characters.
           </p>
         )}
@@ -214,7 +214,7 @@ export default function SignupForm() {
       <button
         type="submit"
         disabled={isSubmitting}
-        className="mt-1 flex w-full items-center justify-center gap-2 rounded-btn bg-coral px-4 py-2.5 text-[14px] font-medium text-white transition-opacity hover:opacity-95 disabled:opacity-60"
+        className="mt-1 flex min-h-[46px] w-full items-center justify-center gap-2 rounded-btn bg-coral px-4 py-2.5 text-[14px] font-medium text-white transition-opacity hover:opacity-95 disabled:opacity-60"
       >
         {isSubmitting && <Spinner size={14} className="text-white" />}
         {isSubmitting ? 'Creating account...' : 'Create account'}

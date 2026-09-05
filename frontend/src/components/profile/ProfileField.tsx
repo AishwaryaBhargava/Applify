@@ -51,7 +51,7 @@ export default function ProfileField({
     return (
       <div>
         {!hideLabelInView && (
-          <span className="mb-1 block text-[10px] font-medium uppercase tracking-[0.7px] text-text-faint">
+          <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.7px] text-text-faint sm:text-[10px]">
             {label}
           </span>
         )}
@@ -67,11 +67,11 @@ export default function ProfileField({
   }
 
   const shared =
-    'w-full rounded-input border border-border-input bg-bg px-3 py-2 text-[13px] text-text-primary outline-none transition-colors placeholder:text-text-faint focus:border-teal-medium focus:bg-card'
+    'w-full rounded-input border border-border-input bg-bg px-3 py-2 text-[16px] text-text-primary outline-none transition-colors placeholder:text-text-faint focus:border-teal-medium focus:bg-card sm:text-[13px]'
 
   return (
     <div>
-      <label className="mb-1 block text-[10px] font-medium uppercase tracking-[0.7px] text-text-muted">
+      <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.7px] text-text-muted sm:text-[10px]">
         {label}
       </label>
       {multiline ? (
@@ -105,7 +105,11 @@ export default function ProfileField({
           className={shared}
         />
       )}
-      {hint && <p className="mt-1 text-[11px] text-text-faint">{hint}</p>}
+      {hint && (
+        <p className="mt-1 text-[12px] leading-relaxed text-text-faint sm:text-[11px]">
+          {hint}
+        </p>
+      )}
     </div>
   )
 }

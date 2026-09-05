@@ -24,7 +24,9 @@ export default function NavItem({
       end={end}
       className={({ isActive }) =>
         [
-          'flex items-center gap-2.5 rounded-input px-3 py-2 text-[13px] transition-colors',
+          // 40px tall in the touch drawer, back to the compact desktop row
+          // once the sidebar is a permanent column.
+          'flex min-h-[40px] items-center gap-2.5 rounded-input px-3 py-2 text-[13px] transition-colors nav:min-h-0',
           isActive
             ? 'bg-teal-light font-medium text-teal-ink'
             : 'text-text-secondary hover:bg-surface-warm',
