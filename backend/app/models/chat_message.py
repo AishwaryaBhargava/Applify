@@ -29,6 +29,12 @@ class ChatMessage(Base):
     # "user" or "assistant"
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # What produced this message: a normal chat turn, a rendered analysis, or a
+    # generated document. The frontend renders each kind differently, so it is a
+    # column rather than something inferred from the text. Defaults to "chat".
+    kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'chat'"), default="chat"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

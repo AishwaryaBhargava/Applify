@@ -1,9 +1,340 @@
-"""Tests for the profile routes.
+"""Tests for resume parsing, the profile routes, and gap detection.
 
-Phase 1 covers the auth guard only. Behavioural tests arrive with Phases 4-5.
+Covers Phase 4 (onboarding and resume parsing) and Phase 5 (enrichment and gap
+detection). Everything runs offline: the Groq call is patched out, and the
+database is the ``FakeSession`` from ``conftest``. The one exception is
+``test_live_extract_profile``, which is opt-in behind ``RUN_LIVE=1``.
 """
 
+import json
+import os
+import uuid
+from datetime import datetime, timezone
+
+import pytest
 from fastapi.testclient import TestClient
+
+from app.api.schemas.profile import ParsedProfile, coerce_parsed_profile
+from app.models.profile import Profile
+from app.services import profile_service, resume_parser
+from app.services.resume_parser import (
+    EmptyResumeText,
+    ProfileExtractionError,
+    ResumeTextExtractionError,
+    UnsupportedResumeFormat,
+)
+from app.tests.conftest import TEST_USER_ID, FakeSession
+from app.tests.fixtures import SAMPLE_RESUME_TEXT, make_docx, make_pdf
+
+PDF_CONTENT_TYPE = "application/pdf"
+DOCX_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
+
+# What a well-behaved model returns. Kept small: the shape is what is under
+# test, not the extraction quality.
+SAMPLE_EXTRACTION = {
+    "summary": "Backend engineer with six years of experience.",
+    "work_experience": [
+        {
+            "title": "Senior Backend Engineer",
+            "company": "Kestrel Payments",
+            "location": "Bengaluru, India",
+            "start_date": "March 2022",
+            "end_date": "",
+            "current": True,
+            "highlights": ["Cut reconciliation from 40 minutes to 6."],
+        }
+    ],
+    "education": [
+        {
+            "degree": "Master of Technology",
+            "institution": "IIT Hyderabad",
+            "field": "Computer Science",
+            "start_date": "2017",
+            "end_date": "2019",
+            "details": "CGPA 8.7/10.",
+        }
+    ],
+    "skills": ["Python", "Go", "PostgreSQL"],
+    "certifications": [
+        {"name": "AWS Certified Solutions Architect", "issuer": "AWS", "year": "2021"}
+    ],
+    "projects": [
+        {
+            "name": "Ledgerlite",
+            "description": "An append-only ledger library.",
+            "technologies": ["Go", "SQLite"],
+            "link": "github.com/example/ledgerlite",
+        }
+    ],
+    "achievements": ["Speaker, IndiaFOSS 2023."],
+}
+
+
+def make_profile(
+    user_id: str = TEST_USER_ID,
+    parsed_json: dict | None = None,
+    raw_text: str = "raw resume text",
+) -> Profile:
+    """Build a Profile row the way the database would hand one back."""
+    now = datetime.now(timezone.utc)
+    return Profile(
+        user_id=uuid.UUID(user_id),
+        raw_text=raw_text,
+        parsed_json=parsed_json if parsed_json is not None else dict(SAMPLE_EXTRACTION),
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@pytest.fixture
+def mock_groq(monkeypatch: pytest.MonkeyPatch):
+    """Replace the Groq call with a canned response body.
+
+    Returns a setter so a test can choose what the "model" says, including
+    deliberately malformed output.
+    """
+
+    def set_response(body: str) -> None:
+        monkeypatch.setattr(
+            resume_parser, "_call_groq_extraction", lambda resume_text: body
+        )
+
+    set_response(json.dumps(SAMPLE_EXTRACTION))
+    return set_response
+
+
+# ==========================================================================
+# Phase 4 -- format detection
+# ==========================================================================
+
+
+def test_detect_format_from_content_type() -> None:
+    """The declared content type is authoritative when it is one we support."""
+    assert resume_parser.detect_format("resume.bin", PDF_CONTENT_TYPE) == "pdf"
+    assert resume_parser.detect_format("resume.bin", DOCX_CONTENT_TYPE) == "docx"
+
+
+def test_detect_format_ignores_charset_parameter() -> None:
+    """A content type with parameters still matches."""
+    assert resume_parser.detect_format("cv.pdf", "application/pdf; charset=binary") == "pdf"
+
+
+def test_detect_format_falls_back_to_extension() -> None:
+    """Clients that send octet-stream are still parsed by extension."""
+    assert (
+        resume_parser.detect_format("resume.docx", "application/octet-stream") == "docx"
+    )
+    assert resume_parser.detect_format("resume.PDF", None) == "pdf"
+
+
+def test_detect_format_rejects_other_types() -> None:
+    """Anything that is not PDF or DOCX raises the typed error the route maps to 400."""
+    with pytest.raises(UnsupportedResumeFormat):
+        resume_parser.detect_format("headshot.png", "image/png")
+    with pytest.raises(UnsupportedResumeFormat):
+        resume_parser.detect_format("resume.txt", None)
+    with pytest.raises(UnsupportedResumeFormat):
+        resume_parser.detect_format(None, None)
+
+
+# ==========================================================================
+# Phase 4 -- text extraction
+# ==========================================================================
+
+
+def test_extract_text_from_pdf() -> None:
+    """A generated PDF round-trips through pdfplumber with its lines intact."""
+    pdf_bytes = make_pdf("Jordan Rivera\nSenior Backend Engineer\nSkills: Python, Go")
+
+    text = resume_parser.extract_text(pdf_bytes, "resume.pdf", PDF_CONTENT_TYPE)
+
+    assert "Jordan Rivera" in text
+    assert "Senior Backend Engineer" in text
+    assert "Skills: Python, Go" in text
+    # Line structure is what tells the model where one bullet ends.
+    assert text.index("Jordan Rivera") < text.index("Senior Backend Engineer")
+    assert "\n" in text
+
+
+def test_extract_text_from_pdf_reads_every_page() -> None:
+    """Multi-line content across the page body is all captured."""
+    lines = ["Line {}".format(index) for index in range(1, 31)]
+    text = resume_parser.extract_text(
+        make_pdf("\n".join(lines)), "resume.pdf", PDF_CONTENT_TYPE
+    )
+    for line in lines:
+        assert line in text
+
+
+def test_extract_text_from_docx_paragraphs_and_tables() -> None:
+    """DOCX extraction covers body paragraphs and table cells.
+
+    Table coverage matters: plenty of resumes lay skills out in a borderless
+    table, and paragraph-only extraction drops all of it silently.
+    """
+    docx_bytes = make_docx(
+        "Jordan Rivera\nSenior Backend Engineer",
+        table_rows=[["Skills", "Python, Go"], ["Tools", "Docker, Kubernetes"]],
+    )
+
+    text = resume_parser.extract_text(docx_bytes, "resume.docx", DOCX_CONTENT_TYPE)
+
+    assert "Jordan Rivera" in text
+    assert "Python, Go" in text
+    assert "Docker, Kubernetes" in text
+
+
+def test_extract_text_rejects_unsupported_format() -> None:
+    """extract_text refuses a file type before it tries to read the bytes."""
+    with pytest.raises(UnsupportedResumeFormat):
+        resume_parser.extract_text(b"\x89PNG\r\n", "headshot.png", "image/png")
+
+
+def test_extract_text_raises_on_corrupt_pdf() -> None:
+    """Bytes that claim to be a PDF but are not surface as an extraction error."""
+    with pytest.raises(ResumeTextExtractionError):
+        resume_parser.extract_text(b"not a pdf at all", "resume.pdf", PDF_CONTENT_TYPE)
+
+
+def test_extract_text_raises_on_corrupt_docx() -> None:
+    """A DOCX that is not a valid zip container is reported, not swallowed."""
+    with pytest.raises(ResumeTextExtractionError):
+        resume_parser.extract_text(b"PK not really", "resume.docx", DOCX_CONTENT_TYPE)
+
+
+def test_extract_text_raises_on_textless_pdf() -> None:
+    """A PDF with no text layer (a scan) gets its own error, not a silent empty parse."""
+    with pytest.raises(EmptyResumeText):
+        resume_parser.extract_text(make_pdf(""), "scan.pdf", PDF_CONTENT_TYPE)
+
+
+# ==========================================================================
+# Phase 4 -- Groq extraction
+# ==========================================================================
+
+
+def test_strip_code_fences() -> None:
+    """A fenced response is unwrapped, an unfenced one is left alone."""
+    assert resume_parser.strip_code_fences('```json\n{"a": 1}\n```') == '{"a": 1}'
+    assert resume_parser.strip_code_fences('```\n{"a": 1}\n```') == '{"a": 1}'
+    assert resume_parser.strip_code_fences('{"a": 1}') == '{"a": 1}'
+
+
+def test_parse_json_response_recovers_from_surrounding_prose() -> None:
+    """A stray sentence around the object does not lose the object."""
+    parsed = resume_parser.parse_json_response(
+        'Here is the profile:\n{"skills": ["Python"]}\nHope that helps.'
+    )
+    assert parsed == {"skills": ["Python"]}
+
+
+def test_extract_profile_returns_structured_profile(mock_groq) -> None:
+    """A well-formed model response becomes a fully populated ParsedProfile."""
+    profile = resume_parser.extract_profile(SAMPLE_RESUME_TEXT)
+
+    assert isinstance(profile, ParsedProfile)
+    assert profile.summary == "Backend engineer with six years of experience."
+    assert profile.work_experience[0].company == "Kestrel Payments"
+    assert profile.work_experience[0].current is True
+    assert profile.education[0].field == "Computer Science"
+    assert profile.skills == ["Python", "Go", "PostgreSQL"]
+    assert profile.certifications[0].issuer == "AWS"
+    assert profile.projects[0].technologies == ["Go", "SQLite"]
+    assert profile.achievements == ["Speaker, IndiaFOSS 2023."]
+
+
+def test_extract_profile_accepts_fenced_json(mock_groq) -> None:
+    """Models fall back into markdown fences; that is not a failure."""
+    mock_groq("```json\n" + json.dumps(SAMPLE_EXTRACTION) + "\n```")
+    assert resume_parser.extract_profile("some text").skills == [
+        "Python",
+        "Go",
+        "PostgreSQL",
+    ]
+
+
+def test_extract_profile_raises_on_malformed_json(mock_groq) -> None:
+    """Output with no recoverable JSON object is an error, not an empty profile."""
+    mock_groq("I could not parse that resume, sorry.")
+    with pytest.raises(ProfileExtractionError):
+        resume_parser.extract_profile("some text")
+
+
+def test_extract_profile_drops_bad_fields_rather_than_failing(mock_groq) -> None:
+    """A partly-wrong response yields a partial profile instead of a 500.
+
+    Losing the skills section is recoverable -- the user edits it on the profile
+    page. Losing the whole upload is not.
+    """
+    mock_groq(
+        json.dumps(
+            {
+                "summary": "  A summary.  ",
+                "work_experience": [
+                    {"title": "Engineer", "highlights": ["Did a thing", "Did a thing"]},
+                    {"location": "Nowhere"},  # no title, no company -- unusable
+                    "a bare string",
+                ],
+                "education": "not a list",
+                "skills": ["Python", "python", "", None, "x" * 200],
+                "certifications": ["Bare cert name"],
+                "projects": [{"name": "Thing"}],
+                "achievements": None,
+            }
+        )
+    )
+
+    profile = resume_parser.extract_profile("some text")
+
+    assert profile.summary == "A summary."
+    assert len(profile.work_experience) == 1
+    assert profile.work_experience[0].highlights == ["Did a thing"]  # de-duplicated
+    assert profile.education == []
+    assert profile.skills == ["Python"]  # case-folded dedupe, over-long token dropped
+    assert profile.certifications[0].name == "Bare cert name"
+    assert profile.achievements == []
+
+
+def test_extract_profile_rejects_blank_text() -> None:
+    """No text means no model call at all."""
+    with pytest.raises(EmptyResumeText):
+        resume_parser.extract_profile("   \n  ")
+
+
+def test_extract_profile_wraps_transport_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dead Groq surfaces as ProfileExtractionError, which the route maps to 502."""
+
+    def boom(resume_text: str) -> str:
+        raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(resume_parser, "_call_groq_extraction", boom)
+    with pytest.raises(ProfileExtractionError):
+        resume_parser.extract_profile("some text")
+
+
+def test_coerce_parsed_profile_never_raises() -> None:
+    """Coercion tolerates anything the model might emit."""
+    assert coerce_parsed_profile(None) == ParsedProfile()
+    assert coerce_parsed_profile("a string") == ParsedProfile()
+    assert coerce_parsed_profile([1, 2, 3]) == ParsedProfile()
+
+
+def test_parse_resume_returns_raw_text_and_parsed_json(mock_groq) -> None:
+    """parse_resume returns exactly the two columns the profiles table stores."""
+    result = resume_parser.parse_resume(
+        make_pdf(SAMPLE_RESUME_TEXT), "resume.pdf", PDF_CONTENT_TYPE
+    )
+
+    assert set(result) == {"raw_text", "parsed_json"}
+    assert "JORDAN A. RIVERA" in result["raw_text"]
+    assert result["parsed_json"]["skills"] == ["Python", "Go", "PostgreSQL"]
+
+
+# ==========================================================================
+# Phase 4 -- routes: auth guard
+# ==========================================================================
 
 
 def test_get_profile_requires_auth(client: TestClient) -> None:
@@ -19,3 +350,493 @@ def test_patch_profile_requires_auth(client: TestClient) -> None:
 def test_upload_profile_requires_auth(client: TestClient) -> None:
     """POST /profile/upload is protected by get_current_user."""
     assert client.post("/profile/upload").status_code == 401
+
+
+def test_get_gaps_requires_auth(client: TestClient) -> None:
+    """GET /profile/gaps is protected by get_current_user."""
+    assert client.get("/profile/gaps").status_code == 401
+
+
+# ==========================================================================
+# Phase 4 -- routes: upload
+# ==========================================================================
+
+
+def test_upload_creates_profile(
+    auth_client: TestClient, db: FakeSession, test_user_uuid: uuid.UUID, mock_groq
+) -> None:
+    """A first upload parses the file and writes a new profile row."""
+    response = auth_client.post(
+        "/profile/upload",
+        files={"file": ("resume.pdf", make_pdf(SAMPLE_RESUME_TEXT), PDF_CONTENT_TYPE)},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["user_id"] == str(test_user_uuid)
+    assert "JORDAN A. RIVERA" in body["raw_text"]
+    assert body["parsed_json"]["skills"] == ["Python", "Go", "PostgreSQL"]
+
+    stored = db.get(Profile, test_user_uuid)
+    assert stored is not None
+    assert stored.parsed_json["work_experience"][0]["company"] == "Kestrel Payments"
+    assert db.commits == 1
+
+
+def test_upload_accepts_docx(
+    auth_client: TestClient, db: FakeSession, test_user_uuid: uuid.UUID, mock_groq
+) -> None:
+    """The DOCX path stores a profile the same way the PDF path does."""
+    response = auth_client.post(
+        "/profile/upload",
+        files={
+            "file": ("resume.docx", make_docx(SAMPLE_RESUME_TEXT), DOCX_CONTENT_TYPE)
+        },
+    )
+
+    assert response.status_code == 200
+    assert db.get(Profile, test_user_uuid) is not None
+
+
+def test_upload_replaces_existing_profile(
+    auth_client: TestClient, db: FakeSession, test_user_uuid: uuid.UUID, mock_groq
+) -> None:
+    """Re-uploading replaces the stored resume rather than merging into it."""
+    existing = db.seed(make_profile(parsed_json={"skills": ["COBOL"]}, raw_text="old"))
+    created_at = existing.created_at
+
+    response = auth_client.post(
+        "/profile/upload",
+        files={"file": ("resume.pdf", make_pdf(SAMPLE_RESUME_TEXT), PDF_CONTENT_TYPE)},
+    )
+
+    assert response.status_code == 200
+    stored = db.get(Profile, test_user_uuid)
+    assert stored.parsed_json["skills"] == ["Python", "Go", "PostgreSQL"]
+    assert "COBOL" not in json.dumps(stored.parsed_json)
+    assert stored.created_at == created_at  # the row is the same one
+    assert stored.updated_at >= created_at
+
+
+def test_upload_rejects_unsupported_type(auth_client: TestClient, db: FakeSession) -> None:
+    """A PNG is refused with 400 and never reaches the database."""
+    response = auth_client.post(
+        "/profile/upload",
+        files={"file": ("headshot.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+    )
+
+    assert response.status_code == 400
+    assert "PDF and DOCX" in response.json()["detail"]
+    assert db.store == {}
+
+
+def test_upload_rejects_oversized_file(auth_client: TestClient, db: FakeSession) -> None:
+    """A file over the 10MB cap is refused with 413 before any parsing happens."""
+    oversized = b"%PDF-1.4\n" + b"0" * (10 * 1024 * 1024)
+
+    response = auth_client.post(
+        "/profile/upload",
+        files={"file": ("huge.pdf", oversized, PDF_CONTENT_TYPE)},
+    )
+
+    assert response.status_code == 413
+    assert "10MB" in response.json()["detail"]
+    assert db.store == {}
+
+
+def test_upload_rejects_empty_file(auth_client: TestClient) -> None:
+    """A zero-byte upload is a 422, not a parser crash."""
+    response = auth_client.post(
+        "/profile/upload", files={"file": ("resume.pdf", b"", PDF_CONTENT_TYPE)}
+    )
+    assert response.status_code == 422
+
+
+def test_upload_rejects_textless_pdf(auth_client: TestClient) -> None:
+    """A scanned PDF gets a 422 that explains why, since there is no OCR."""
+    response = auth_client.post(
+        "/profile/upload",
+        files={"file": ("scan.pdf", make_pdf(""), PDF_CONTENT_TYPE)},
+    )
+
+    assert response.status_code == 422
+    assert "scanned" in response.json()["detail"]
+
+
+def test_upload_maps_extraction_failure_to_502(
+    auth_client: TestClient, mock_groq
+) -> None:
+    """When the model fails, the user is told to retry -- not that their file is bad."""
+    mock_groq("not json")
+
+    response = auth_client.post(
+        "/profile/upload",
+        files={"file": ("resume.pdf", make_pdf(SAMPLE_RESUME_TEXT), PDF_CONTENT_TYPE)},
+    )
+
+    assert response.status_code == 502
+
+
+# ==========================================================================
+# Phase 4 -- routes: read
+# ==========================================================================
+
+
+def test_get_profile_returns_404_when_absent(auth_client: TestClient) -> None:
+    """The onboarding redirect depends on this exact 404 body."""
+    response = auth_client.get("/profile")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Profile not found"}
+
+
+def test_get_profile_returns_stored_profile(
+    auth_client: TestClient, db: FakeSession, test_user_uuid: uuid.UUID
+) -> None:
+    """A stored profile comes back with all seven sections."""
+    db.seed(make_profile())
+
+    response = auth_client.get("/profile")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["user_id"] == str(test_user_uuid)
+    assert body["parsed_json"]["work_experience"][0]["title"] == "Senior Backend Engineer"
+    assert set(body["parsed_json"]) == {
+        "summary",
+        "work_experience",
+        "education",
+        "skills",
+        "certifications",
+        "projects",
+        "achievements",
+    }
+
+
+# ==========================================================================
+# Phase 5 -- routes: enrichment
+# ==========================================================================
+
+
+def test_patch_profile_replaces_one_section(
+    auth_client: TestClient, db: FakeSession, test_user_uuid: uuid.UUID
+) -> None:
+    """A provided section replaces that section; the others are untouched."""
+    db.seed(make_profile())
+
+    response = auth_client.patch("/profile", json={"skills": ["Rust", "Elixir"]})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["parsed_json"]["skills"] == ["Rust", "Elixir"]
+    assert body["parsed_json"]["work_experience"][0]["company"] == "Kestrel Payments"
+    assert db.get(Profile, test_user_uuid).parsed_json["skills"] == ["Rust", "Elixir"]
+
+
+def test_patch_profile_accepts_multiple_sections(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Several sections can be enriched in one request."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={
+            "summary": "A new summary.",
+            "achievements": ["Award A", "Award B"],
+        },
+    )
+
+    body = response.json()
+    assert body["parsed_json"]["summary"] == "A new summary."
+    assert body["parsed_json"]["achievements"] == ["Award A", "Award B"]
+    assert body["parsed_json"]["skills"] == ["Python", "Go", "PostgreSQL"]
+
+
+def test_patch_profile_accepts_wrapped_payload(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """The ``{"parsed_json": {...}}`` wrapper is merged identically."""
+    db.seed(make_profile())
+
+    response = auth_client.patch("/profile", json={"parsed_json": {"skills": ["Rust"]}})
+
+    assert response.status_code == 200
+    assert response.json()["parsed_json"]["skills"] == ["Rust"]
+
+
+def test_patch_profile_can_empty_a_section(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """An explicit empty list clears a section -- deleting the last row must work."""
+    db.seed(make_profile())
+
+    response = auth_client.patch("/profile", json={"certifications": []})
+
+    assert response.json()["parsed_json"]["certifications"] == []
+
+
+def test_patch_profile_ignores_unknown_keys(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Extra keys are dropped rather than 422-ing a whole edit."""
+    db.seed(make_profile())
+
+    response = auth_client.patch("/profile", json={"favourite_colour": "green"})
+
+    assert response.status_code == 200
+    assert response.json()["parsed_json"]["skills"] == ["Python", "Go", "PostgreSQL"]
+
+
+def test_patch_profile_returns_404_when_absent(auth_client: TestClient) -> None:
+    """There is nothing to enrich before onboarding has run."""
+    response = auth_client.patch("/profile", json={"skills": ["Rust"]})
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Profile not found"}
+
+
+# ==========================================================================
+# Phase 5 -- merge semantics
+# ==========================================================================
+
+
+def test_merge_profile_updates_leaves_omitted_sections_alone() -> None:
+    """Section-by-section merge: absent means untouched, present means replaced."""
+    existing = {"skills": ["Python"], "achievements": ["Award"]}
+
+    merged = profile_service.merge_profile_updates(existing, {"skills": ["Rust"]})
+
+    assert merged["skills"] == ["Rust"]
+    assert merged["achievements"] == ["Award"]
+
+
+def test_merge_profile_updates_fills_every_section() -> None:
+    """The result always carries all seven sections, so callers need no guards."""
+    merged = profile_service.merge_profile_updates(None, {"skills": ["Rust"]})
+
+    assert merged["skills"] == ["Rust"]
+    assert merged["summary"] is None
+    assert merged["work_experience"] == []
+    assert merged["projects"] == []
+
+
+def test_merge_profile_updates_does_not_mutate_its_input() -> None:
+    """Callers keep whatever they passed in."""
+    existing = {"skills": ["Python"]}
+
+    profile_service.merge_profile_updates(existing, {"skills": ["Rust"]})
+
+    assert existing == {"skills": ["Python"]}
+
+
+def test_merge_profile_updates_ignores_unknown_sections() -> None:
+    """A key that is not a profile section never reaches the stored JSON."""
+    merged = profile_service.merge_profile_updates({}, {"nonsense": [1, 2, 3]})
+
+    assert "nonsense" not in merged
+
+
+# ==========================================================================
+# Phase 5 -- gap detection
+# ==========================================================================
+
+
+def gap_ids(parsed_json) -> set:
+    """The set of gap ids detected for a profile."""
+    return {gap["id"] for gap in profile_service.detect_gaps(parsed_json)}
+
+
+def test_detect_gaps_flags_every_empty_section() -> None:
+    """An empty profile is missing all seven sections."""
+    ids = gap_ids({})
+
+    assert ids == {
+        "summary-missing",
+        "work_experience-missing",
+        "education-missing",
+        "skills-missing",
+        "certifications-missing",
+        "projects-missing",
+        "achievements-missing",
+    }
+    assert all(
+        gap["severity"] == "missing" for gap in profile_service.detect_gaps({})
+    )
+
+
+def test_detect_gaps_handles_no_profile_json() -> None:
+    """A null parsed_json is treated as an empty profile, not a crash."""
+    assert len(profile_service.detect_gaps(None)) == 7
+
+
+def test_detect_gaps_returns_nothing_for_a_complete_profile() -> None:
+    """A profile with every section filled produces no nudges at all."""
+    complete = ParsedProfile.model_validate(SAMPLE_EXTRACTION).model_dump()
+    complete["summary"] = " ".join(["word"] * 40)
+
+    assert profile_service.detect_gaps(complete) == []
+
+
+def test_detect_gaps_flags_a_short_summary() -> None:
+    """A summary under 30 words reads as a placeholder."""
+    gaps = profile_service.detect_gaps({"summary": "Backend engineer."})
+    summary_gap = next(gap for gap in gaps if gap["section"] == "summary")
+
+    assert summary_gap["id"] == "summary-thin"
+    assert summary_gap["severity"] == "thin"
+
+
+def test_detect_gaps_accepts_a_long_summary() -> None:
+    """At the threshold, the summary is no longer a gap."""
+    assert "summary-thin" not in gap_ids({"summary": " ".join(["word"] * 30)})
+    assert "summary-missing" not in gap_ids({"summary": " ".join(["word"] * 30)})
+
+
+def test_detect_gaps_flags_too_few_skills() -> None:
+    """Under three skills cannot support a JD comparison."""
+    ids = gap_ids({"skills": ["Python", "Go"]})
+
+    assert "skills-thin" in ids
+    assert "skills-missing" not in ids
+    assert "skills-thin" not in gap_ids({"skills": ["Python", "Go", "SQL"]})
+
+
+def test_detect_gaps_flags_roles_without_highlights() -> None:
+    """A role with no bullet points gives tailored resumes nothing to draw on."""
+    gaps = profile_service.detect_gaps(
+        {
+            "work_experience": [
+                {"title": "Engineer", "company": "Acme", "highlights": []},
+                {"title": "Analyst", "company": "Beta", "highlights": ["Did a thing"]},
+            ]
+        }
+    )
+    role_gap = next(gap for gap in gaps if gap["section"] == "work_experience")
+
+    assert role_gap["id"] == "work_experience-thin"
+    assert "Engineer" in role_gap["message"]
+    assert "Analyst" not in role_gap["message"]
+
+
+def test_detect_gaps_ignores_whitespace_only_highlights() -> None:
+    """A bullet made of spaces is not a bullet."""
+    ids = gap_ids(
+        {"work_experience": [{"title": "Engineer", "highlights": ["   ", ""]}]}
+    )
+    assert "work_experience-thin" in ids
+
+
+def test_detect_gaps_flags_education_without_a_degree() -> None:
+    """An education entry with no qualification name reads wrong on a resume."""
+    ids = gap_ids({"education": [{"institution": "Some University"}]})
+
+    assert "education-thin" in ids
+    assert "education-missing" not in ids
+    assert "education-thin" not in gap_ids(
+        {"education": [{"degree": "B.E.", "institution": "Some University"}]}
+    )
+
+
+def test_detect_gap_ids_are_stable_across_calls() -> None:
+    """Dismissals are persisted by id, so the ids must not depend on list order."""
+    first = {"work_experience": [{"title": "A"}, {"title": "B"}]}
+    second = {"work_experience": [{"title": "B"}, {"title": "A"}]}
+
+    assert gap_ids(first) == gap_ids(second)
+
+
+def test_detect_gaps_on_a_thin_resume_is_actionable() -> None:
+    """The sparse fixture produces nudges for most of the profile."""
+    thin = ParsedProfile(
+        work_experience=[{"title": "Junior Analyst", "company": "Harbourline"}],
+        skills=["Excel"],
+    ).model_dump()
+
+    ids = gap_ids(thin)
+
+    assert "summary-missing" in ids
+    assert "work_experience-thin" in ids
+    assert "skills-thin" in ids
+    assert "education-missing" in ids
+
+
+# ==========================================================================
+# Phase 5 -- routes: gaps
+# ==========================================================================
+
+
+def test_get_gaps_returns_nudges(auth_client: TestClient, db: FakeSession) -> None:
+    """GET /profile/gaps returns the detected gaps under a "gaps" key."""
+    db.seed(make_profile(parsed_json={"skills": ["Python"]}))
+
+    response = auth_client.get("/profile/gaps")
+
+    assert response.status_code == 200
+    body = response.json()
+    ids = {gap["id"] for gap in body["gaps"]}
+    assert "skills-thin" in ids
+    assert "work_experience-missing" in ids
+    assert all({"id", "section", "severity", "message"} <= set(gap) for gap in body["gaps"])
+
+
+def test_get_gaps_is_empty_for_a_complete_profile(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A complete profile stops nudging entirely."""
+    complete = ParsedProfile.model_validate(SAMPLE_EXTRACTION).model_dump()
+    complete["summary"] = " ".join(["word"] * 40)
+    db.seed(make_profile(parsed_json=complete))
+
+    assert auth_client.get("/profile/gaps").json() == {"gaps": []}
+
+
+def test_get_gaps_returns_404_when_absent(auth_client: TestClient) -> None:
+    """No profile means the same 404 as GET /profile, so either call can redirect."""
+    response = auth_client.get("/profile/gaps")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Profile not found"}
+
+
+# ==========================================================================
+# Opt-in live model test
+# ==========================================================================
+
+
+@pytest.mark.skipif(
+    os.getenv("RUN_LIVE") != "1",
+    reason="Live Groq test. Set RUN_LIVE=1 to run it.",
+)
+def test_live_extract_profile() -> None:
+    """Run the real extraction prompt against the fictional sample resume.
+
+    This is the only test that spends a model call, so it is opt-in. It guards
+    the prompt itself: the offline tests all mock the response and would happily
+    pass with a prompt that returns nothing useful.
+    """
+    profile = resume_parser.extract_profile(SAMPLE_RESUME_TEXT)
+
+    assert profile.summary and len(profile.summary.split()) > 15
+    assert len(profile.work_experience) == 2
+    assert len(profile.education) == 2
+    assert len(profile.certifications) == 2
+    assert len(profile.projects) == 2
+    assert len(profile.achievements) >= 3
+
+    current = profile.work_experience[0]
+    assert current.company == "Kestrel Payments"
+    assert current.current is True
+    assert current.start_date and "2022" in current.start_date
+    assert len(current.highlights) >= 3
+
+    # Grouped skill lines must be split into tokens with the category label
+    # dropped -- "Languages: Python, Go, SQL" is three skills, not one.
+    assert {"Python", "Go", "PostgreSQL", "Kubernetes"} <= set(profile.skills)
+    assert not any(skill.lower().startswith("languages") for skill in profile.skills)
+    assert all(len(skill) <= 60 for skill in profile.skills)
+
+    # The prompt forbids returning contact details.
+    serialised = json.dumps(profile.model_dump()).lower()
+    assert "jordan.rivera@example.com" not in serialised
+    assert "+91 90000" not in serialised

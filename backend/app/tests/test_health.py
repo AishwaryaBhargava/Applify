@@ -13,6 +13,9 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
+from app.data.deps import get_db
+from app.main import app
+from app.tests.conftest import FakeSession
 from app.utils import auth as auth_module
 from app.utils.auth import AuthError, decode_jwt
 
@@ -197,12 +200,23 @@ def test_jwks_branch_errors_clearly_without_supabase_url(
 
 
 def test_protected_route_accepts_valid_hs256_token(
-    client: TestClient, hs256_secret: str
+    client: TestClient, hs256_secret: str, db: FakeSession
 ) -> None:
-    """A valid token passes get_current_user; the stub route then returns 501."""
-    token = jwt.encode(_claims(), hs256_secret, algorithm="HS256")
-    response = client.get("/profile", headers={"Authorization": "Bearer " + token})
-    assert response.status_code == 501
+    """A valid token passes get_current_user and the route body actually runs.
+
+    The 404 is the point: the request got past authentication and reached
+    GET /profile, which found no profile for this user. get_db is overridden so
+    the assertion is about the token, not about a database being reachable.
+    """
+    app.dependency_overrides[get_db] = lambda: db
+    try:
+        token = jwt.encode(_claims(), hs256_secret, algorithm="HS256")
+        response = client.get("/profile", headers={"Authorization": "Bearer " + token})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Profile not found"}
 
 
 def test_auth_verify_returns_user_id(client: TestClient, hs256_secret: str) -> None:
