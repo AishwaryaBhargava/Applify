@@ -28,6 +28,14 @@ parse. Two details matter beyond the shape:
 Validation failures keep their ``422`` but lose FastAPI's nested list of error
 objects in favour of one readable sentence, because the frontend renders
 ``detail`` directly into a toast.
+
+There is one deliberate addition to that shape. A ``ProfileValidationError`` --
+a profile edit that parsed fine but left a required field empty -- answers with
+the same ``detail`` sentence *plus* an ``errors`` list naming the section, the
+index, and the field, so the profile page can highlight the input the user has
+to fix rather than only toasting at them. The extra key is additive: a client
+that only reads ``detail`` sees no difference, and pydantic's own
+``RequestValidationError`` body is untouched.
 """
 
 import logging
@@ -38,6 +46,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DBAPIError, OperationalError
 
+from app.api.schemas.profile import ProfileValidationError
 from app.services.llm import is_rate_limit_error
 
 logger = logging.getLogger(__name__)
@@ -81,6 +90,32 @@ async def validation_exception_handler(
     detail = flatten_validation_errors(list(errors))
     logger.info("%s %s failed validation: %s", request.method, request.url.path, detail)
     return error_response(status.HTTP_422_UNPROCESSABLE_CONTENT, detail)
+
+
+async def profile_validation_exception_handler(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    """422 for an incomplete profile edit, with per-field errors alongside.
+
+    Deliberately a handler rather than a ``try`` in the route: an
+    ``HTTPException`` can only carry ``detail``, and returning a raw
+    ``JSONResponse`` from a route declared ``-> ProfileResponse`` would make the
+    signature a lie. Raising past the route keeps both honest.
+    """
+    if not isinstance(exc, ProfileValidationError):  # pragma: no cover - defensive
+        return error_response(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Request validation failed."
+        )
+    logger.info(
+        "%s %s rejected an incomplete profile edit: %s",
+        request.method,
+        request.url.path,
+        exc.detail,
+    )
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        content={"detail": exc.detail, "errors": exc.errors},
+    )
 
 
 async def database_exception_handler(
@@ -133,5 +168,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     would do, but naming both keeps the intent readable from ``main.py``.
     """
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(
+        ProfileValidationError, profile_validation_exception_handler
+    )
     app.add_exception_handler(OperationalError, database_exception_handler)
     app.add_exception_handler(DBAPIError, database_exception_handler)

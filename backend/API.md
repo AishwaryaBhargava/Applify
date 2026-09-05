@@ -29,7 +29,9 @@ deleted, is a **404** -- never a 403, which would confirm it exists.
 
 `422` bodies carry a flattened sentence (`"title: String should have at least 1
 character"`), not pydantic's nested list, because the frontend renders `detail`
-straight into a toast.
+straight into a toast. [`PATCH /profile`](#patch-profile) adds an `errors` list
+alongside that sentence so the profile page can highlight the offending input;
+it is the only endpoint that does, and the addition is purely additive.
 
 The two `503`s are distinguished by their message: `Database unavailable, please
 retry`, and a rate-limit message the frontend matches on to show "Taking a
@@ -108,10 +110,66 @@ a profile existing.
 |---|---|---|
 | `POST` | `/profile/upload` | multipart `file`: PDF or DOCX, 10MB max. Parses in memory, stores `raw_text` + `parsed_json`. `400` unsupported format, `413` too large, `422` no text, `502` extraction model unreachable |
 | `GET` | `/profile` | `404 "Profile not found"` drives the onboarding redirect |
-| `PATCH` | `/profile` | Section-wise manual enrichment |
+| `PATCH` | `/profile` | Section-wise manual enrichment, validated strictly -- see below |
 | `GET` | `/profile/gaps` | Rule-based nudges for missing or thin sections |
 
 `ProfileResponse`: `{user_id, raw_text, parsed_json, created_at, updated_at}`.
+
+### `PATCH /profile`
+
+Any subset of the seven sections, sent either at the top level (`{"skills":
+[...]}`) or wrapped in `parsed_json`. A section that is present replaces that
+section wholesale; an omitted section is untouched. Unknown keys are ignored
+rather than 422-ing a whole edit.
+
+**Two modes of coercion, on purpose.** `/profile/upload` is *lenient*: the
+extraction model's output is cleaned up and whatever survives is kept, because a
+half-read resume is still worth having and the user can fix the rest by hand. A
+user edit is *strict*, because the opposite failure is worse -- a row that
+vanishes on save with a `200` and no explanation is silent data loss. So the
+rules below apply to `PATCH` only. A title-less role that arrived through
+extraction is still accepted and stored; it just cannot be *typed* in.
+
+Only the sections present in the request are validated, so a weak entry left
+behind by an older extraction never blocks an unrelated edit to another section.
+
+| Section | Required | Cleaned silently | Max lengths |
+|---|---|---|---|
+| `summary` | -- | Trimmed; empty becomes `null` | 2000 |
+| `work_experience[]` | `title` **and** `company` | Blank highlights removed, de-duplicated | `title`, `company`, `location` 200; dates 100; `highlights` 20 items of 500 |
+| `education[]` | `institution`, **plus** `degree` or `field` | -- | `institution`, `degree`, `field` 200; dates 100; `details` 2000 |
+| `certifications[]` | `name` | -- | `name`, `issuer` 200; `year` 100 |
+| `projects[]` | `name` | Blank technologies removed, de-duplicated | `name` 200; `description` 2000; `technologies` 60 each; `link` 500 |
+| `skills[]` | -- | Blanks removed, duplicates folded case-insensitively | 60 each |
+| `achievements[]` | -- | Blanks removed, duplicates folded case-insensitively | 500 each |
+
+An entry with **nothing** in it -- every field empty or absent -- is dropped
+without an error. That is the row the editor added and the user never filled in,
+and it is not a mistake. A **partially** filled entry missing a required field
+is a `422`. Booleans do not count as content: a work entry where only the
+"I work here now" toggle is set is still blank.
+
+**Error shape.** Every section is checked before responding, so one save reports
+every problem:
+
+```json
+{
+  "detail": "work_experience[1]: company is required; education[0]: institution is required",
+  "errors": [
+    {"section": "work_experience", "index": 1, "field": "company", "message": "Company is required"},
+    {"section": "education", "index": 0, "field": "institution", "message": "Institution is required"}
+  ]
+}
+```
+
+`detail` is the toast. `errors` is what the profile page highlights on: `index`
+is the position in the **submitted** list, so it lines up with the editor's rows,
+and is `null` for a section-level failure such as an over-long `summary`.
+
+Validation runs on the incoming partial **before** the merge, so a `422` writes
+nothing at all -- the stored profile is exactly what it was. A malformed body
+(a string where a list belongs) is still pydantic's `422`, with the plain
+`{"detail": "..."}` shape and no `errors` key.
 
 ---
 

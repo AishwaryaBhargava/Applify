@@ -13,6 +13,7 @@ from app.api.schemas.profile import (
     ProfileGapsResponse,
     ProfileResponse,
     ProfileUpdateRequest,
+    validate_section_updates,
 )
 from app.data.deps import CurrentUser, DbSession
 from app.models.profile import Profile
@@ -119,14 +120,22 @@ def update_profile(
     Any subset of the profile sections may be sent. A section that is present
     replaces that section wholesale; omitted sections are untouched.
 
+    Unlike the resume-extraction path, which keeps whatever the model managed to
+    read, a user edit is validated strictly first: an entry that is missing a
+    required field is a 422 rather than a row that quietly disappears on save.
+    Validation runs on the incoming partial *before* the merge, so a rejected
+    request writes nothing at all.
+
     Raises:
         HTTPException: 404 when the user has no profile to enrich.
+        ProfileValidationError: 422, with a per-field ``errors`` list, when an
+            entry the user filled in is missing a required field.
     """
     profile = _require_profile(db, user_id)
     updated = profile_service.merge_profile(
         db,
         profile,
-        payload.section_updates(),
+        validate_section_updates(payload.section_updates()),
         raw_text=payload.raw_text,
     )
     return ProfileResponse.model_validate(updated)

@@ -14,7 +14,13 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.schemas.profile import ParsedProfile, coerce_parsed_profile
+from app.api.schemas.profile import (
+    ParsedProfile,
+    ProfileValidationError,
+    coerce_parsed_profile,
+    format_profile_errors,
+    validate_section_updates,
+)
 from app.models.profile import Profile
 from app.services import profile_service, resume_parser
 from app.services.resume_parser import (
@@ -594,6 +600,607 @@ def test_patch_profile_returns_404_when_absent(auth_client: TestClient) -> None:
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Profile not found"}
+
+
+# ==========================================================================
+# Phase 5 -- enrichment: required-field validation
+# ==========================================================================
+
+# The rule under test throughout this block: a *partially* filled entry missing
+# a required field is a 422 the user can act on, while an entry with nothing in
+# it at all is a stray editor row and is dropped without comment. The extraction
+# path keeps its own, lenient rules -- the last test here guards that.
+
+
+def test_patch_profile_accepts_a_complete_role(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A role naming both a title and a company saves."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={"work_experience": [{"title": "Staff Engineer", "company": "Acme"}]},
+    )
+
+    assert response.status_code == 200
+    roles = response.json()["parsed_json"]["work_experience"]
+    assert [role["title"] for role in roles] == ["Staff Engineer"]
+
+
+def test_patch_profile_rejects_a_role_without_a_company(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A half-filled role is the case that used to vanish silently on save."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={
+            "work_experience": [
+                {"title": "Staff Engineer", "company": "Acme"},
+                {"title": "Analyst", "company": "   "},
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["detail"] == "work_experience[1]: company is required"
+    assert body["errors"] == [
+        {
+            "section": "work_experience",
+            "index": 1,
+            "field": "company",
+            "message": "Company is required",
+        }
+    ]
+
+
+def test_patch_profile_rejects_a_role_without_a_title(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A company with no role attached is equally unusable downstream."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile", json={"work_experience": [{"company": "Acme"}]}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {
+            "section": "work_experience",
+            "index": 0,
+            "field": "title",
+            "message": "Job title is required",
+        }
+    ]
+
+
+def test_patch_profile_drops_a_blank_role_without_erroring(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """"Added a row, never filled it" is not a mistake worth a 422."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={
+            "work_experience": [
+                {"title": "Staff Engineer", "company": "Acme"},
+                {"title": "", "company": "  ", "location": None, "highlights": []},
+                {},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["parsed_json"]["work_experience"]) == 1
+
+
+def test_patch_profile_drops_a_blank_role_even_when_its_toggle_is_set(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A flipped "I work here now" switch says nothing about the job."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile", json={"work_experience": [{"current": True}]}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["parsed_json"]["work_experience"] == []
+
+
+def test_patch_profile_accepts_education_with_a_degree(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """An institution plus a degree is a complete education entry."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={"education": [{"institution": "IIT Madras", "degree": "BTech"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["parsed_json"]["education"][0]["degree"] == "BTech"
+
+
+def test_patch_profile_accepts_education_with_only_a_field(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Resumes name the subject as often as the qualification; either will do."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={"education": [{"institution": "IIT Madras", "field": "Physics"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["parsed_json"]["education"][0]["field"] == "Physics"
+
+
+def test_patch_profile_rejects_education_without_an_institution(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A degree from nowhere cannot be rendered on a resume."""
+    db.seed(make_profile())
+
+    response = auth_client.patch("/profile", json={"education": [{"degree": "BTech"}]})
+
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {
+            "section": "education",
+            "index": 0,
+            "field": "institution",
+            "message": "Institution is required",
+        }
+    ]
+
+
+def test_patch_profile_rejects_education_without_a_degree_or_field(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Naming the school alone does not say what was studied there."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile", json={"education": [{"institution": "IIT Madras"}]}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {
+            "section": "education",
+            "index": 0,
+            "field": "degree",
+            "message": "Degree or field of study is required",
+        }
+    ]
+
+
+def test_patch_profile_rejects_a_certification_without_a_name(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """An issuer and a year with no certification named is half a row."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile", json={"certifications": [{"issuer": "AWS", "year": "2021"}]}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {
+            "section": "certifications",
+            "index": 0,
+            "field": "name",
+            "message": "Certification name is required",
+        }
+    ]
+
+
+def test_patch_profile_accepts_a_named_certification(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A name alone is enough; issuer and year stay optional."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile", json={"certifications": [{"name": "CKA"}]}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["parsed_json"]["certifications"][0]["name"] == "CKA"
+
+
+def test_patch_profile_rejects_a_project_without_a_name(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A described project with no name cannot be listed."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile", json={"projects": [{"description": "An append-only ledger."}]}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {
+            "section": "projects",
+            "index": 0,
+            "field": "name",
+            "message": "Project name is required",
+        }
+    ]
+
+
+def test_patch_profile_accepts_a_named_project(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A name alone is a valid project row."""
+    db.seed(make_profile())
+
+    response = auth_client.patch("/profile", json={"projects": [{"name": "Ledgerlite"}]})
+
+    assert response.status_code == 200
+    assert response.json()["parsed_json"]["projects"][0]["name"] == "Ledgerlite"
+
+
+def test_patch_profile_removes_blank_skills_without_erroring(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """An empty chip in a tag input is a user mid-edit, not an error."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile", json={"skills": ["Python", "", "   ", "Go"]}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["parsed_json"]["skills"] == ["Python", "Go"]
+
+
+def test_patch_profile_deduplicates_skills_case_insensitively(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """The first spelling wins; the rest are dropped rather than rejected."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile", json={"skills": ["Python", "python", "PYTHON", "Go"]}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["parsed_json"]["skills"] == ["Python", "Go"]
+
+
+def test_patch_profile_cleans_achievements_the_same_way(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Achievements follow the skills rules: blanks out, duplicates folded."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={"achievements": ["Award A", "  ", "award a", "Award B"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["parsed_json"]["achievements"] == ["Award A", "Award B"]
+
+
+def test_patch_profile_trims_the_summary_and_allows_an_empty_one(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Whitespace is stripped, and clearing the summary is a legitimate edit."""
+    db.seed(make_profile())
+
+    trimmed = auth_client.patch("/profile", json={"summary": "  Backend engineer.  "})
+    assert trimmed.json()["parsed_json"]["summary"] == "Backend engineer."
+
+    cleared = auth_client.patch("/profile", json={"summary": "   "})
+    assert cleared.status_code == 200
+    assert cleared.json()["parsed_json"]["summary"] is None
+
+
+def test_patch_profile_rejects_an_over_long_title(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A pasted paragraph in the title box gets a message naming the limit."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={"work_experience": [{"title": "x" * 201, "company": "Acme"}]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {
+            "section": "work_experience",
+            "index": 0,
+            "field": "title",
+            "message": "Job title must be 200 characters or less",
+        }
+    ]
+
+
+def test_patch_profile_rejects_an_over_long_summary(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A section-level error carries a null index -- there is no row to point at."""
+    db.seed(make_profile())
+
+    response = auth_client.patch("/profile", json={"summary": "x" * 2001})
+
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {
+            "section": "summary",
+            "index": None,
+            "field": "summary",
+            "message": "Summary must be 2000 characters or less",
+        }
+    ]
+    assert response.json()["detail"] == (
+        "summary: summary must be 2000 characters or less"
+    )
+
+
+def test_patch_profile_rejects_too_many_highlights(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A role with 21 bullets would dominate every generated output."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={
+            "work_experience": [
+                {
+                    "title": "Engineer",
+                    "company": "Acme",
+                    "highlights": ["Bullet {}".format(n) for n in range(21)],
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {
+            "section": "work_experience",
+            "index": 0,
+            "field": "highlights",
+            "message": "Keep highlights to 20 or fewer",
+        }
+    ]
+
+
+def test_patch_profile_rejects_an_over_long_highlight(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """One error per list, not one per bullet: the user gets the rule once."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={
+            "work_experience": [
+                {
+                    "title": "Engineer",
+                    "company": "Acme",
+                    "highlights": ["x" * 501, "y" * 501],
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {
+            "section": "work_experience",
+            "index": 0,
+            "field": "highlights",
+            "message": "Each highlight must be 500 characters or less",
+        }
+    ]
+
+
+def test_patch_profile_reports_every_problem_in_one_response(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """One save reports every bad entry, with the index of each."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={
+            "work_experience": [
+                {"title": "Engineer", "company": "Acme"},
+                {"title": "Analyst"},
+            ],
+            "education": [{"degree": "BTech"}],
+        },
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["detail"] == (
+        "work_experience[1]: company is required; "
+        "education[0]: institution is required"
+    )
+    assert [(e["section"], e["index"], e["field"]) for e in body["errors"]] == [
+        ("work_experience", 1, "company"),
+        ("education", 0, "institution"),
+    ]
+
+
+def test_patch_profile_writes_nothing_when_validation_fails(
+    auth_client: TestClient, db: FakeSession, test_user_uuid: uuid.UUID
+) -> None:
+    """A 422 must leave the stored profile exactly as it was."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={
+            "skills": ["Rust"],
+            "work_experience": [{"company": "Acme"}],
+        },
+    )
+
+    assert response.status_code == 422
+    stored = db.get(Profile, test_user_uuid)
+    assert db.commits == 0
+    assert stored.parsed_json["skills"] == ["Python", "Go", "PostgreSQL"]
+    assert stored.parsed_json["work_experience"][0]["title"] == "Senior Backend Engineer"
+
+
+def test_patch_profile_only_validates_the_sections_it_was_sent(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A weak entry left by an old extraction never blocks an unrelated edit."""
+    db.seed(
+        make_profile(
+            parsed_json={
+                "summary": None,
+                # No title: the lenient extraction path allows this.
+                "work_experience": [{"company": "Kestrel Payments"}],
+                "education": [],
+                "skills": ["Python"],
+                "certifications": [],
+                "projects": [],
+                "achievements": [],
+            }
+        )
+    )
+
+    response = auth_client.patch("/profile", json={"skills": ["Rust"]})
+
+    assert response.status_code == 200
+    assert response.json()["parsed_json"]["skills"] == ["Rust"]
+
+
+def test_patch_profile_keeps_the_flattened_shape_for_malformed_bodies(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Pydantic's own 422 is unchanged: one sentence, and no ``errors`` key."""
+    db.seed(make_profile())
+
+    response = auth_client.patch("/profile", json={"skills": "Python"})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert "errors" not in body
+    assert body["detail"].startswith("skills: ")
+
+
+def test_upload_still_accepts_a_title_less_role(
+    auth_client: TestClient, db: FakeSession, test_user_uuid: uuid.UUID, mock_groq
+) -> None:
+    """Extraction stays lenient: strict rules apply to user edits only.
+
+    A model that read the employer but missed the job title still produces a
+    usable profile -- the user fixes the title on the profile page, which is
+    exactly where the strict rules take over.
+    """
+    mock_groq(
+        json.dumps(
+            {
+                "work_experience": [{"company": "Kestrel Payments"}],
+                "education": [{"institution": "IIT Hyderabad"}],
+                "skills": ["Python"],
+            }
+        )
+    )
+
+    response = auth_client.post(
+        "/profile/upload",
+        files={"file": ("resume.pdf", make_pdf(SAMPLE_RESUME_TEXT), PDF_CONTENT_TYPE)},
+    )
+
+    assert response.status_code == 200
+    stored = db.get(Profile, test_user_uuid)
+    assert stored.parsed_json["work_experience"][0]["company"] == "Kestrel Payments"
+    assert stored.parsed_json["work_experience"][0]["title"] is None
+    assert stored.parsed_json["education"][0]["institution"] == "IIT Hyderabad"
+
+
+# ==========================================================================
+# Phase 5 -- enrichment: the validator on its own
+# ==========================================================================
+
+
+def test_validate_section_updates_ignores_absent_sections() -> None:
+    """Only what the user sent is inspected, and nothing else is invented."""
+    assert validate_section_updates({}) == {}
+    assert validate_section_updates({"skills": ["Go"]}) == {"skills": ["Go"]}
+
+
+def test_validate_section_updates_drops_blank_entries_from_every_section() -> None:
+    """Every section list treats an empty row the same way."""
+    cleaned = validate_section_updates(
+        {
+            "work_experience": [{"title": "", "company": ""}],
+            "education": [{"institution": None, "degree": "  "}],
+            "certifications": [{"name": ""}],
+            "projects": [{"name": "", "description": ""}],
+        }
+    )
+
+    assert cleaned == {
+        "work_experience": [],
+        "education": [],
+        "certifications": [],
+        "projects": [],
+    }
+
+
+def test_validate_section_updates_raises_with_structured_errors() -> None:
+    """The exception carries both renderings the frontend needs."""
+    with pytest.raises(ProfileValidationError) as raised:
+        validate_section_updates({"projects": [{"description": "A thing."}]})
+
+    assert raised.value.detail == "projects[0]: project name is required"
+    assert raised.value.errors == [
+        {
+            "section": "projects",
+            "index": 0,
+            "field": "name",
+            "message": "Project name is required",
+        }
+    ]
+
+
+def test_format_profile_errors_joins_with_semicolons() -> None:
+    """Several failures still fit in one toast."""
+    detail = format_profile_errors(
+        [
+            {
+                "section": "work_experience",
+                "index": 1,
+                "field": "company",
+                "message": "Company is required",
+            },
+            {
+                "section": "summary",
+                "index": None,
+                "field": "summary",
+                "message": "Summary must be 2000 characters or less",
+            },
+        ]
+    )
+
+    assert detail == (
+        "work_experience[1]: company is required; "
+        "summary: summary must be 2000 characters or less"
+    )
 
 
 # ==========================================================================
