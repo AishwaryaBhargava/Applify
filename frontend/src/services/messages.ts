@@ -1,4 +1,4 @@
-import api, { RATE_LIMITED_MESSAGE } from './api'
+import api, { RATE_LIMITED_MESSAGE, handlePrivateInstance } from './api'
 import { supabase } from '../lib/supabase'
 import type {
   ChatMessage,
@@ -102,6 +102,10 @@ async function rejectionMessage(response: Response): Promise<string> {
     )
     return 'Your session expired. Sign in again to pick this up.'
   }
+
+  // An allowlist rejection is about the whole instance: /private explains it
+  // once instead of every stream reporting it separately.
+  handlePrivateInstance(response.status, detail)
 
   const rateLimited =
     response.status === 429 ||

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import NewChatModal from '../chat/NewChatModal'
-import { useChatListStore } from '../../store/chatListStore'
+import { useChatListStore, type NewChatInput } from '../../store/chatListStore'
 import { useUiStore } from '../../store/uiStore'
 
 interface NewChatButtonProps {
@@ -31,8 +31,8 @@ export default function NewChatButton({
   const clearError = useChatListStore((state) => state.clearError)
   const closeSidebar = useUiStore((state) => state.closeSidebar)
 
-  async function handleCreate(title: string, company: string, jdText: string) {
-    const chat = await createChat(title, company, jdText)
+  async function handleCreate(input: NewChatInput) {
+    const chat = await createChat(input)
     if (!chat) return false
     closeSidebar()
     navigate(`/chat/${chat.id}`)

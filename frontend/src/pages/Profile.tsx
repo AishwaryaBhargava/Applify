@@ -1,7 +1,8 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { ExternalLink, UploadCloud } from 'lucide-react'
+import { ExternalLink, FileSpreadsheet, Github, UploadCloud } from 'lucide-react'
 import TopBar from '../components/common/TopBar'
+import ImportFileDialog from '../components/profile/ImportFileDialog'
 import ProfileChips from '../components/profile/ProfileChips'
 import ProfileCompleteness from '../components/profile/ProfileCompleteness'
 import ProfileEntryList, {
@@ -24,6 +25,7 @@ import {
   emptyCertification,
   emptyEducation,
   emptyProject,
+  emptyPublication,
   emptyWorkExperience,
 } from '../services/profile'
 import { useProfileStore } from '../store/profileStore'
@@ -34,6 +36,7 @@ import type {
   ProfileGap,
   ProfileSectionKey,
   Project,
+  Publication,
   WorkExperience,
 } from '../types'
 
@@ -46,6 +49,7 @@ const KNOWN_SECTIONS = [
   'certifications',
   'projects',
   'achievements',
+  'publications',
 ]
 
 /** Nullable strings arrive from the backend; the editors want plain strings. */
@@ -55,6 +59,63 @@ function text(value: string | null | undefined): string {
 
 function joinMeta(parts: (string | null | undefined)[]): string {
   return parts.map((part) => part?.trim()).filter(Boolean).join(' · ')
+}
+
+/** A period as the view renders it: "Jan 2022 — Present". */
+function joinPeriod(parts: (string | null | undefined)[]): string {
+  return parts.map((part) => part?.trim()).filter(Boolean).join(' — ')
+}
+
+/** Small tinted chips, for coursework, honors, awards and technologies. */
+function Chips({
+  values,
+  tone = 'teal',
+}: {
+  values: string[]
+  tone?: 'teal' | 'amber' | 'neutral'
+}) {
+  if (values.length === 0) return null
+  const classes = {
+    teal: 'bg-teal-light text-teal-ink',
+    amber: 'bg-amber-light text-amber-ink',
+    neutral: 'bg-surface-warm text-text-secondary',
+  } as const
+
+  return (
+    <ul className="mt-2 flex flex-wrap gap-1.5">
+      {values.map((value, index) => (
+        <li
+          key={`${value}-${index}`}
+          className={`rounded-pill px-2 py-[3px] text-[12px] sm:text-[11px] ${classes[tone]}`}
+        >
+          {value}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** An outbound link rendered as a small labelled icon. */
+function LinkChip({
+  href,
+  label,
+  icon,
+}: {
+  href: string
+  label: string
+  icon: ReactNode
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex min-h-[40px] items-center gap-1 text-[12px] text-teal-deep underline-offset-2 hover:underline sm:min-h-0"
+    >
+      {icon}
+      {label}
+    </a>
+  )
 }
 
 /* ------------------------------------------------------------------ */
@@ -112,6 +173,25 @@ function SummarySection({ value }: { value: string }) {
   )
 }
 
+/**
+ * The employment types offered, blank first.
+ *
+ * A short closed list rather than a free-text box, because this field earns its
+ * keep by being consistent — "a 2024 internship" reads very differently from a
+ * staff role in a fit analysis, and only if the word is the same every time.
+ * An imported value outside the list is still kept and shown; the select adds
+ * it rather than resetting it.
+ */
+const EMPLOYMENT_TYPES = [
+  '',
+  'Full-time',
+  'Part-time',
+  'Internship',
+  'Contract',
+  'Freelance',
+  'Other',
+] as const
+
 const EXPERIENCE_FIELDS: EntryFieldSpec<WorkExperience>[] = [
   {
     key: 'title',
@@ -145,6 +225,15 @@ const EXPERIENCE_FIELDS: EntryFieldSpec<WorkExperience>[] = [
     placeholder: 'Mar 2024',
     maxLength: PROFILE_LIMITS.DATE,
   },
+  {
+    key: 'employment_type',
+    label: 'Employment type',
+    kind: 'select',
+    options: EMPLOYMENT_TYPES.map((value) => ({
+      value,
+      label: value || 'Not set',
+    })),
+  },
   { key: 'current', label: 'I currently work here', kind: 'toggle' },
   {
     key: 'highlights',
@@ -155,19 +244,37 @@ const EXPERIENCE_FIELDS: EntryFieldSpec<WorkExperience>[] = [
     itemMaxLength: PROFILE_LIMITS.HIGHLIGHT,
     maxItems: PROFILE_LIMITS.HIGHLIGHTS,
   },
+  {
+    key: 'awards',
+    label: 'Awards',
+    kind: 'lines',
+    rows: 2,
+    placeholder: 'Engineering Excellence Award, 2023',
+    hint: 'One per line. Recognition earned in this role.',
+    itemMaxLength: PROFILE_LIMITS.HIGHLIGHT,
+    maxItems: PROFILE_LIMITS.AWARDS,
+  },
 ]
 
 function ExperienceView({ entry }: { entry: WorkExperience }) {
-  const period = [entry.start_date, entry.current ? 'Present' : entry.end_date]
-    .map((part) => part?.trim())
-    .filter(Boolean)
-    .join(' — ')
+  const period = joinPeriod([
+    entry.start_date,
+    entry.current ? 'Present' : entry.end_date,
+  ])
+  const employmentType = text(entry.employment_type)
 
   return (
     <>
-      <p className="text-[14px] font-medium text-text-primary">
-        {text(entry.title) || 'Untitled role'}
-      </p>
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <p className="text-[14px] font-medium text-text-primary">
+          {text(entry.title) || 'Untitled role'}
+        </p>
+        {employmentType && (
+          <span className="rounded-pill bg-surface-warm px-2 py-[2px] text-[10px] font-medium uppercase tracking-[0.5px] text-text-secondary">
+            {employmentType}
+          </span>
+        )}
+      </div>
       {joinMeta([entry.company, entry.location]) && (
         <p className="mt-0.5 text-[12px] text-text-secondary">
           {joinMeta([entry.company, entry.location])}
@@ -181,6 +288,7 @@ function ExperienceView({ entry }: { entry: WorkExperience }) {
           ))}
         </ul>
       )}
+      <Chips values={entry.awards ?? []} tone="amber" />
     </>
   )
 }
@@ -247,12 +355,39 @@ const EDUCATION_FIELDS: EntryFieldSpec<Education>[] = [
     maxLength: PROFILE_LIMITS.DATE,
   },
   {
+    key: 'gpa',
+    label: 'GPA',
+    placeholder: '8.4/10',
+    hint: 'As your transcript states it — scales differ by country.',
+    maxLength: PROFILE_LIMITS.LABEL,
+  },
+  {
     key: 'details',
     label: 'Details',
     kind: 'textarea',
     rows: 2,
-    placeholder: 'Grade, thesis, coursework worth mentioning',
+    placeholder: 'Thesis, activities, anything else worth mentioning',
     maxLength: PROFILE_LIMITS.DETAIL,
+  },
+  {
+    key: 'coursework',
+    label: 'Coursework',
+    kind: 'lines',
+    rows: 3,
+    placeholder: 'Distributed Systems',
+    hint: 'One per line. The courses a job description might ask for by name.',
+    itemMaxLength: PROFILE_LIMITS.NAME,
+    maxItems: PROFILE_LIMITS.COURSEWORK_ITEMS,
+  },
+  {
+    key: 'honors',
+    label: 'Honors',
+    kind: 'lines',
+    rows: 2,
+    placeholder: 'Dean’s List, 2019',
+    hint: 'One per line.',
+    itemMaxLength: PROFILE_LIMITS.NAME,
+    maxItems: PROFILE_LIMITS.COURSEWORK_ITEMS,
   },
 ]
 
@@ -268,12 +403,18 @@ function EducationView({ entry }: { entry: Education }) {
           {joinMeta([entry.institution, entry.field])}
         </p>
       )}
-      {period && <p className="mt-0.5 text-[12px] text-text-muted sm:text-[11px]">{period}</p>}
+      {joinMeta([period, text(entry.gpa) && `GPA ${entry.gpa}`]) && (
+        <p className="mt-0.5 text-[12px] text-text-muted sm:text-[11px]">
+          {joinMeta([period, text(entry.gpa) && `GPA ${entry.gpa}`])}
+        </p>
+      )}
       {text(entry.details) && (
         <p className="mt-1.5 text-[13px] leading-relaxed text-text-primary">
           {entry.details}
         </p>
       )}
+      <Chips values={entry.coursework ?? []} tone="teal" />
+      <Chips values={entry.honors ?? []} tone="amber" />
     </>
   )
 }
@@ -346,17 +487,55 @@ const CERTIFICATION_FIELDS: EntryFieldSpec<Certification>[] = [
     placeholder: '2023',
     maxLength: PROFILE_LIMITS.DATE,
   },
+  {
+    key: 'expires',
+    label: 'Expires',
+    placeholder: '2026',
+    hint: 'Leave blank if it does not expire.',
+    maxLength: PROFILE_LIMITS.DATE,
+  },
+  {
+    key: 'credential_url',
+    label: 'Credential URL',
+    placeholder: 'https://www.credly.com/badges/...',
+    maxLength: PROFILE_LIMITS.LINK,
+  },
+  {
+    key: 'description',
+    label: 'Description',
+    kind: 'textarea',
+    rows: 2,
+    placeholder: 'What it covers, and what it took to earn.',
+    maxLength: PROFILE_LIMITS.DETAIL,
+  },
 ]
 
 function CertificationView({ entry }: { entry: Certification }) {
+  const credentialUrl = text(entry.credential_url)
+  const meta = joinMeta([
+    entry.issuer,
+    entry.year,
+    text(entry.expires) && `expires ${entry.expires}`,
+  ])
+
   return (
     <>
-      <p className="text-[14px] font-medium text-text-primary">
-        {text(entry.name) || 'Unnamed certification'}
-      </p>
-      {joinMeta([entry.issuer, entry.year]) && (
-        <p className="mt-0.5 text-[12px] text-text-secondary">
-          {joinMeta([entry.issuer, entry.year])}
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <p className="text-[14px] font-medium text-text-primary">
+          {text(entry.name) || 'Unnamed certification'}
+        </p>
+        {credentialUrl && (
+          <LinkChip
+            href={credentialUrl}
+            label="Credential"
+            icon={<ExternalLink size={11} />}
+          />
+        )}
+      </div>
+      {meta && <p className="mt-0.5 text-[12px] text-text-secondary">{meta}</p>}
+      {text(entry.description) && (
+        <p className="mt-1.5 text-[13px] leading-relaxed text-text-primary">
+          {entry.description}
         </p>
       )}
     </>
@@ -387,6 +566,99 @@ function CertificationsSection({ value }: { value: Certification[] }) {
   )
 }
 
+const PUBLICATION_FIELDS: EntryFieldSpec<Publication>[] = [
+  {
+    key: 'title',
+    label: 'Title',
+    placeholder: 'Sub-linear settlement in distributed ledgers',
+    required: true,
+    wide: true,
+    maxLength: PROFILE_LIMITS.TITLE,
+  },
+  {
+    key: 'authors',
+    label: 'Authors',
+    placeholder: 'Bhargava A, Smith J, Nakamura K',
+    wide: true,
+    maxLength: PROFILE_LIMITS.AUTHORS,
+  },
+  {
+    key: 'year',
+    label: 'Year',
+    placeholder: '2024',
+    maxLength: PROFILE_LIMITS.DATE,
+  },
+  {
+    key: 'status',
+    label: 'Status',
+    placeholder: 'Published, under review, preprint',
+    maxLength: PROFILE_LIMITS.LABEL,
+  },
+  {
+    key: 'url',
+    label: 'URL',
+    placeholder: 'https://doi.org/...',
+    wide: true,
+    maxLength: PROFILE_LIMITS.LINK,
+  },
+]
+
+function PublicationView({ entry }: { entry: Publication }) {
+  const url = text(entry.url)
+  const meta = joinMeta([entry.authors, entry.year])
+
+  return (
+    <>
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <p className="text-[14px] font-medium text-text-primary">
+          {text(entry.title) || 'Untitled publication'}
+        </p>
+        {text(entry.status) && (
+          <span className="rounded-pill bg-surface-warm px-2 py-[2px] text-[10px] font-medium uppercase tracking-[0.5px] text-text-secondary">
+            {entry.status}
+          </span>
+        )}
+        {url && (
+          <LinkChip href={url} label="Read" icon={<ExternalLink size={11} />} />
+        )}
+      </div>
+      {meta && <p className="mt-0.5 text-[12px] text-text-secondary">{meta}</p>}
+    </>
+  )
+}
+
+function PublicationsSection({ value }: { value: Publication[] }) {
+  const editor = useProfileSectionEditor('publications', value)
+
+  return (
+    <ProfileSection
+      title="Publications"
+      description="Papers, articles, and talks — evidence a hiring manager can go and read."
+      {...headerProps(editor)}
+    >
+      <ProfileEntryList
+        entries={editor.draft}
+        fields={PUBLICATION_FIELDS}
+        isEditing={editor.isEditing}
+        makeEmpty={emptyPublication}
+        onChange={editor.setDraft}
+        errors={editor.errors}
+        addLabel="Add publication"
+        emptyText="No publications yet."
+        renderView={(entry) => <PublicationView entry={entry} />}
+      />
+    </ProfileSection>
+  )
+}
+
+/*
+ * There is deliberately no box for the legacy single `link`.
+ *
+ * It is still carried on the entry and still rendered in view mode when none of
+ * the three named links is set, but it is not something to type into: the
+ * backend fills it from the first named link on every save, so an editable copy
+ * would show the same URL twice the moment someone filled in GitHub.
+ */
 const PROJECT_FIELDS: EntryFieldSpec<Project>[] = [
   {
     key: 'name',
@@ -396,9 +668,33 @@ const PROJECT_FIELDS: EntryFieldSpec<Project>[] = [
     maxLength: PROFILE_LIMITS.NAME,
   },
   {
-    key: 'link',
-    label: 'Link',
-    placeholder: 'https://github.com/...',
+    key: 'start_date',
+    label: 'Start',
+    placeholder: 'Mar 2024',
+    maxLength: PROFILE_LIMITS.DATE,
+  },
+  {
+    key: 'end_date',
+    label: 'End',
+    placeholder: 'Ongoing',
+    maxLength: PROFILE_LIMITS.DATE,
+  },
+  {
+    key: 'links.github',
+    label: 'GitHub',
+    placeholder: 'https://github.com/you/project',
+    maxLength: PROFILE_LIMITS.LINK,
+  },
+  {
+    key: 'links.live',
+    label: 'Live',
+    placeholder: 'https://project.com',
+    maxLength: PROFILE_LIMITS.LINK,
+  },
+  {
+    key: 'links.demo',
+    label: 'Demo',
+    placeholder: 'https://youtu.be/...',
     maxLength: PROFILE_LIMITS.LINK,
   },
   {
@@ -408,6 +704,15 @@ const PROJECT_FIELDS: EntryFieldSpec<Project>[] = [
     rows: 3,
     placeholder: 'What it does, and what you built.',
     maxLength: PROFILE_LIMITS.DETAIL,
+  },
+  {
+    key: 'highlights',
+    label: 'Highlights',
+    kind: 'lines',
+    placeholder: 'Handled 2M events a day on a single node',
+    hint: 'One bullet per line. What it achieved, not what it is.',
+    itemMaxLength: PROFILE_LIMITS.HIGHLIGHT,
+    maxItems: PROFILE_LIMITS.HIGHLIGHTS,
   },
   {
     key: 'technologies',
@@ -420,41 +725,52 @@ const PROJECT_FIELDS: EntryFieldSpec<Project>[] = [
 ]
 
 function ProjectView({ entry }: { entry: Project }) {
+  const links = entry.links ?? { github: null, live: null, demo: null }
+  const named = [
+    { href: text(links.github), label: 'Code', icon: <Github size={11} /> },
+    { href: text(links.live), label: 'Live', icon: <ExternalLink size={11} /> },
+    { href: text(links.demo), label: 'Demo', icon: <ExternalLink size={11} /> },
+  ].filter((link) => link.href)
+  // The legacy single link is a fallback, not a fourth chip: a project parsed
+  // before `links` existed has its URL there, and one edited since has it in
+  // whichever of the three boxes actually describes it.
+  const legacy = named.length === 0 ? text(entry.link) : ''
+  const period = joinPeriod([entry.start_date, entry.end_date])
+
   return (
     <>
-      <div className="flex flex-wrap items-baseline gap-x-2">
+      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
         <p className="text-[14px] font-medium text-text-primary">
           {text(entry.name) || 'Untitled project'}
         </p>
-        {text(entry.link) && (
-          <a
-            href={entry.link ?? undefined}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex min-h-[40px] min-w-[44px] items-center gap-1 text-[12px] text-teal-deep underline-offset-2 hover:underline sm:min-h-0 sm:min-w-0"
-          >
-            <ExternalLink size={11} />
-            Open
-          </a>
+        {named.map((link) => (
+          <LinkChip
+            key={link.label}
+            href={link.href}
+            label={link.label}
+            icon={link.icon}
+          />
+        ))}
+        {legacy && (
+          <LinkChip href={legacy} label="Open" icon={<ExternalLink size={11} />} />
         )}
       </div>
+      {period && (
+        <p className="mt-0.5 text-[12px] text-text-muted sm:text-[11px]">{period}</p>
+      )}
       {text(entry.description) && (
         <p className="mt-1 text-[13px] leading-relaxed text-text-primary">
           {entry.description}
         </p>
       )}
-      {(entry.technologies ?? []).length > 0 && (
-        <ul className="mt-2 flex flex-wrap gap-1.5">
-          {(entry.technologies ?? []).map((tech, index) => (
-            <li
-              key={`${tech}-${index}`}
-              className="rounded-pill bg-teal-light px-2 py-[3px] text-[12px] text-teal-ink sm:text-[11px]"
-            >
-              {tech}
-            </li>
+      {(entry.highlights ?? []).length > 0 && (
+        <ul className="mt-2 list-disc space-y-1 pl-4 text-[13px] leading-relaxed text-text-primary marker:text-teal-soft">
+          {(entry.highlights ?? []).map((highlight, index) => (
+            <li key={index}>{highlight}</li>
           ))}
         </ul>
       )}
+      <Chips values={entry.technologies ?? []} tone="teal" />
     </>
   )
 }
@@ -567,6 +883,7 @@ export default function Profile() {
   const dismissGap = useProfileStore((state) => state.dismissGap)
   const hasUnsaved = useProfileStore((state) => state.dirtySections.size > 0)
   const toggleSidebar = useUiStore((state) => state.toggleSidebar)
+  const [importOpen, setImportOpen] = useState(false)
 
   // Closing the tab or hitting reload with a half-edited role on screen asks
   // first. In-app navigation is guarded separately, at the sidebar links.
@@ -598,12 +915,24 @@ export default function Profile() {
         subtitle="Everything the AI knows about you"
         onMenu={toggleSidebar}
         actions={
-          <Link
-            to="/onboarding"
-            className="flex min-h-[40px] items-center whitespace-nowrap rounded-btn border border-border-input bg-card px-3 py-2 text-[13px] font-medium text-text-primary transition-colors hover:border-teal-soft hover:text-teal-ink sm:px-3.5"
-          >
-            Re-upload resume
-          </Link>
+          <>
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className="flex min-h-[40px] items-center gap-1.5 whitespace-nowrap rounded-btn border border-border-input bg-card px-3 py-2 text-[13px] font-medium text-text-primary transition-colors hover:border-teal-soft hover:text-teal-ink sm:px-3.5"
+            >
+              <FileSpreadsheet size={14} className="text-teal-deep" />
+              <span className="hidden sm:inline">Import from a file</span>
+              <span className="sm:hidden">Import</span>
+            </button>
+            <Link
+              to="/onboarding"
+              className="flex min-h-[40px] items-center whitespace-nowrap rounded-btn border border-border-input bg-card px-3 py-2 text-[13px] font-medium text-text-primary transition-colors hover:border-teal-soft hover:text-teal-ink sm:px-3.5"
+            >
+              <span className="hidden sm:inline">Re-upload resume</span>
+              <span className="sm:hidden">Resume</span>
+            </Link>
+          </>
         }
       />
 
@@ -660,6 +989,13 @@ export default function Profile() {
                 <CertificationsSection value={parsed.certifications} />
               </SectionGroup>
 
+              <SectionGroup
+                gaps={gapsFor('publications')}
+                onDismiss={dismissGap}
+              >
+                <PublicationsSection value={parsed.publications} />
+              </SectionGroup>
+
               <SectionGroup gaps={gapsFor('projects')} onDismiss={dismissGap}>
                 <ProjectsSection value={parsed.projects} />
               </SectionGroup>
@@ -671,6 +1007,11 @@ export default function Profile() {
           )}
         </div>
       </div>
+
+      <ImportFileDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+      />
     </div>
   )
 }

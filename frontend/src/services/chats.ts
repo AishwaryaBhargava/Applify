@@ -6,6 +6,15 @@ export interface ChatCreateRequest {
   /** Optional on the backend; the new-chat modal still asks for it. */
   company?: string | null
   jd_text?: string | null
+  /**
+   * The three tracker fields worth capturing at the moment the user has the
+   * posting open in another tab. They are copied onto the tracker entry the
+   * same transaction opens, so filling them in here saves a trip to the
+   * drawer later; leaving them out costs nothing.
+   */
+  job_url?: string | null
+  location?: string | null
+  source?: string | null
 }
 
 export type { ChatDetail }

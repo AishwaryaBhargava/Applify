@@ -6,8 +6,28 @@ import { pushToast } from './toastStore'
 import { useTrackerStore } from './trackerStore'
 import type { JobChat, TrackerEntry } from '../types'
 
+/**
+ * What the new-chat form collects. `title` and `jdText` are what the chat
+ * itself needs; the rest land on the tracker entry `POST /chats` opens in the
+ * same transaction.
+ */
+export interface NewChatInput {
+  title: string
+  company: string
+  jdText: string
+  jobUrl?: string
+  location?: string
+  source?: string
+}
+
+/** '' from an untouched optional input means "not set", which is null. */
+function orNull(value: string | undefined): string | null {
+  const trimmed = (value ?? '').trim()
+  return trimmed || null
+}
+
 /** The optimistic tracker row mirroring the one `POST /chats` just opened. */
-function trackerEntryFor(chat: JobChat): TrackerEntry {
+function trackerEntryFor(chat: JobChat, input: NewChatInput): TrackerEntry {
   return {
     // The real row id lives on the server; the Phase 8 fetch replaces this.
     // The prefix makes an unsynced row obvious if one shows up in a log.
@@ -25,6 +45,20 @@ function trackerEntryFor(chat: JobChat): TrackerEntry {
     fit_score: null,
     created_at: chat.created_at,
     updated_at: chat.created_at,
+    // Mirrored from the form rather than guessed at: the server copied exactly
+    // these three onto the row it just wrote, and the next GET /tracker
+    // replaces the lot anyway.
+    job_url: orNull(input.jobUrl),
+    location: orNull(input.location),
+    source: orNull(input.source),
+    salary: null,
+    applied_at: null,
+    next_action: null,
+    next_action_date: null,
+    notes: null,
+    priority: null,
+    days_since_applied: null,
+    next_action_due: false,
   }
 }
 
@@ -48,11 +82,7 @@ export interface ChatListState {
    * Creates a chat and mirrors its tracker entry locally.
    * Resolves to the new chat, or null with `error` set on failure.
    */
-  createChat: (
-    title: string,
-    company: string,
-    jdText: string,
-  ) => Promise<JobChat | null>
+  createChat: (input: NewChatInput) => Promise<JobChat | null>
   /** Optimistic delete; the row comes back if the request fails. */
   deleteChat: (chatId: string) => Promise<boolean>
   clearError: () => void
@@ -96,18 +126,26 @@ export const useChatListStore = create<ChatListState>()(
         }
       },
 
-      createChat: async (title, company, jdText) => {
+      createChat: async (input) => {
         set({ error: null })
         try {
           const chat = await chatsService.createChat({
-            title: title.trim(),
-            company: company.trim() || null,
-            jd_text: jdText.trim() || null,
+            title: input.title.trim(),
+            company: input.company.trim() || null,
+            jd_text: input.jdText.trim() || null,
+            // Omitted entirely when empty rather than sent as null: a backend
+            // from before these fields existed ignores unknown keys, but there
+            // is no reason to make it read three of them on every create.
+            ...(orNull(input.jobUrl) ? { job_url: orNull(input.jobUrl) } : {}),
+            ...(orNull(input.location)
+              ? { location: orNull(input.location) }
+              : {}),
+            ...(orNull(input.source) ? { source: orNull(input.source) } : {}),
           })
           get().addChat(chat)
           // The backend opened a tracker entry in the same transaction; mirror
           // it now so the tracker is right without a reload.
-          useTrackerStore.getState().addEntry(trackerEntryFor(chat))
+          useTrackerStore.getState().addEntry(trackerEntryFor(chat, input))
           return chat
         } catch (error) {
           const message = apiErrorMessage(

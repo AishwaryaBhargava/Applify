@@ -30,6 +30,9 @@ const Chat = lazy(() => import('./pages/Chat'))
 const Profile = lazy(() => import('./pages/Profile'))
 const Tracker = lazy(() => import('./pages/Tracker'))
 const Settings = lazy(() => import('./pages/Settings'))
+const Private = lazy(() => import('./pages/Private'))
+const ImportReview = lazy(() => import('./components/profile/ImportReview'))
+const PrintOutput = lazy(() => import('./pages/PrintOutput'))
 
 /** Centered spinner used while the session or profile check is resolving. */
 function FullPageLoader({ label = 'Loading' }: { label?: string }) {
@@ -76,10 +79,15 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
   if (hasProfile === null) return <FullPageLoader label="Loading your profile" />
 
+  // /profile/import is exempt alongside /onboarding: a user with no resume can
+  // bootstrap a profile from a spreadsheet, and bouncing them back to the
+  // upload page would throw away the proposal they are on their way to review.
+  const ONBOARDING_EXEMPT = ['/onboarding', '/profile/import']
+
   if (
     hasProfile === false &&
     !skippedOnboarding &&
-    location.pathname !== '/onboarding'
+    !ONBOARDING_EXEMPT.includes(location.pathname)
   ) {
     return <Navigate to="/onboarding" replace />
   }
@@ -211,6 +219,11 @@ export default function App() {
             }
           />
 
+          {/* Outside the shell and outside the auth guard: a private instance
+              answers 403 to every request, including the profile check the
+              guard runs, so a page that needed either would never render. */}
+          <Route path="/private" element={<Private />} />
+
           {/* Protected, but deliberately outside the sidebar shell: onboarding is
               a focused single-purpose page. */}
           <Route
@@ -218,6 +231,18 @@ export default function App() {
             element={
               <RequireAuth>
                 <Onboarding />
+              </RequireAuth>
+            }
+          />
+
+          {/* Protected, and deliberately outside the shell: a generated
+              document on its own, sized for paper. The sidebar and top bar
+              would be printed along with it. */}
+          <Route
+            path="/print/outputs/:chatId/:outputId"
+            element={
+              <RequireAuth>
+                <PrintOutput />
               </RequireAuth>
             }
           />
@@ -244,6 +269,17 @@ export default function App() {
             element={
               <Protected>
                 <Profile />
+              </Protected>
+            }
+          />
+          {/* The review step for a supplementary-file import. Inside the shell
+              because it is part of working on the profile, and protected
+              because the proposal it renders is the user's own data. */}
+          <Route
+            path="/profile/import"
+            element={
+              <Protected>
+                <ImportReview />
               </Protected>
             }
           />

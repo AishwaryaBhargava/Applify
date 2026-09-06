@@ -106,6 +106,55 @@ export function isRateLimitError(error: unknown): boolean {
   return false
 }
 
+/* ------------------------------------------------------------------ */
+/* Private instance                                                    */
+/* ------------------------------------------------------------------ */
+
+/** Where a private-instance rejection sends the user. */
+export const PRIVATE_INSTANCE_PATH = '/private'
+
+/**
+ * The 403 a self-hosted instance answers with when the signed-in email is not
+ * on its allowlist. Matched on the wording rather than the bare status, because
+ * a plain 403 can mean any number of other things.
+ */
+const PRIVATE_INSTANCE_PATTERN = /instance is private/i
+
+/** True when this failure is the allowlist refusing the signed-in account. */
+export function isPrivateInstanceError(error: unknown): boolean {
+  return (
+    apiErrorStatus(error) === 403 &&
+    PRIVATE_INSTANCE_PATTERN.test(responseDetail(error))
+  )
+}
+
+/**
+ * Sends the user to /private for an allowlist rejection.
+ *
+ * Takes the status and detail rather than an error object so the SSE transport,
+ * which never sees an AxiosError, can call it with a raw `Response`'s parts and
+ * get the same behaviour as every ordinary request.
+ *
+ * @returns True when this was a private-instance rejection and the redirect was
+ *   issued, so a caller can stop reporting the failure any other way.
+ */
+export function handlePrivateInstance(
+  status: number | undefined,
+  detail: string,
+): boolean {
+  if (status !== 403 || !PRIVATE_INSTANCE_PATTERN.test(detail)) return false
+  if (typeof window !== 'undefined' &&
+      window.location.pathname === PRIVATE_INSTANCE_PATH) {
+    return true
+  }
+  // Imported lazily for the same reason the session module is: navigation
+  // reaches back into the router, which is nowhere near this file.
+  void import('../lib/navigation').then(({ navigateTo }) =>
+    navigateTo(PRIVATE_INSTANCE_PATH, { replace: true }),
+  )
+  return true
+}
+
 /** Copy shown while the automatic retry of a rate-limited call is in flight. */
 export const RETRYING_MESSAGE = 'Taking a moment, retrying...'
 
@@ -196,6 +245,13 @@ api.interceptors.response.use(undefined, async (error: unknown) => {
     // several of those import this file for `apiErrorMessage`.
     const { handleSessionExpired } = await import('../store/sessionExpired')
     void handleSessionExpired()
+    return Promise.reject(error)
+  }
+
+  // An allowlist rejection is about the whole instance, not this one request:
+  // every other call in flight is failing the same way, so the answer is one
+  // page that explains it rather than a toast per panel.
+  if (handlePrivateInstance(apiErrorStatus(error), responseDetail(error))) {
     return Promise.reject(error)
   }
 

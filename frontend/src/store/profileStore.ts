@@ -7,7 +7,13 @@ import {
   type ProfileUpdateResult,
 } from '../services/profile'
 import { pushToast } from './toastStore'
-import type { ParsedProfile, Profile, ProfileGap, ProfileSectionKey } from '../types'
+import type {
+  ImportProposal,
+  ParsedProfile,
+  Profile,
+  ProfileGap,
+  ProfileSectionKey,
+} from '../types'
 
 /**
  * Dismissed nudges live under their own key rather than inside the persisted
@@ -57,6 +63,16 @@ export interface ProfileState {
    * reload, so a dirty flag that did would be a lie.
    */
   dirtySections: Set<ProfileSectionKey>
+  /**
+   * The merge preview `POST /profile/import` returned, waiting on the review
+   * screen.
+   *
+   * Deliberately not persisted. It is a proposal, not data — reloading
+   * /profile/import with a stale one from localStorage would offer to apply a
+   * file the user uploaded days ago, so a refresh sends them back to /profile
+   * instead and they upload again.
+   */
+  importProposal: ImportProposal | null
 
   setProfile: (profile: Profile | null) => void
   setGaps: (gaps: ProfileGap[]) => void
@@ -80,6 +96,8 @@ export interface ProfileState {
   dismissGap: (gapId: string) => void
   /** Clears every dismissal, so a re-uploaded profile nudges again. */
   resetDismissals: () => void
+  /** Stages a merge preview for the review screen (null clears it). */
+  setImportProposal: (proposal: ImportProposal | null) => void
   reset: () => void
 }
 
@@ -93,6 +111,7 @@ export const useProfileStore = create<ProfileState>()(
       isSaving: false,
       error: null,
       dirtySections: new Set<ProfileSectionKey>(),
+      importProposal: null,
 
       setProfile: (profile) => set({ profile }),
       setGaps: (gaps) => set({ gaps }),
@@ -176,6 +195,8 @@ export const useProfileStore = create<ProfileState>()(
         set({ dismissedGapIds: [] })
       },
 
+      setImportProposal: (proposal) => set({ importProposal: proposal }),
+
       reset: () =>
         set({
           profile: null,
@@ -184,6 +205,7 @@ export const useProfileStore = create<ProfileState>()(
           isSaving: false,
           error: null,
           dirtySections: new Set<ProfileSectionKey>(),
+          importProposal: null,
         }),
     }),
     {

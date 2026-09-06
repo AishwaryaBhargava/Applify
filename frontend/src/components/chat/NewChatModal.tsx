@@ -1,15 +1,25 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { X } from 'lucide-react'
+import { ChevronDown, ChevronRight, X } from 'lucide-react'
 import Spinner from '../common/Spinner'
+import { validateJobUrl } from '../../lib/validation'
+import { TRACKER_SOURCES } from '../../types'
+import type { NewChatInput } from '../../store/chatListStore'
 
 /** Short enough to be a paste slip, long enough to be a real posting. */
 export const MIN_JD_LENGTH = 50
+
+/**
+ * One input style for the whole form. 16px on a phone is not a preference:
+ * anything smaller makes iOS Safari zoom the page on focus and leave it there.
+ */
+const fieldClass =
+  'min-h-[44px] rounded-input border border-border-input bg-card px-3 py-2 text-[16px] outline-none focus:border-teal-deep sm:min-h-0 sm:text-[13px]'
 
 interface NewChatModalProps {
   open: boolean
   onClose: () => void
   /** Resolves to true when the chat was created and the modal may close. */
-  onCreate: (title: string, company: string, jdText: string) => Promise<boolean>
+  onCreate: (input: NewChatInput) => Promise<boolean>
   /** Failure from the create request, shown under the form. */
   error?: string | null
 }
@@ -19,6 +29,13 @@ interface NewChatModalProps {
  *
  * The JD is required because everything downstream is grounded in it — an
  * analysis without one is just the model guessing.
+ *
+ * The three tracker fields underneath are collapsed by default and every one
+ * of them is optional. This is the one moment the user has the posting open in
+ * another tab, so it is the cheapest place in the product to capture the link,
+ * the location and where they found it — but making them fields on the main
+ * form would put three things nobody has to fill in between the job title and
+ * the description, which is the one thing they do.
  */
 export default function NewChatModal({
   open,
@@ -29,6 +46,10 @@ export default function NewChatModal({
   const [title, setTitle] = useState('')
   const [company, setCompany] = useState('')
   const [jdText, setJdText] = useState('')
+  const [jobUrl, setJobUrl] = useState('')
+  const [location, setLocation] = useState('')
+  const [source, setSource] = useState('')
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const [touched, setTouched] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const titleRef = useRef<HTMLInputElement | null>(null)
@@ -38,6 +59,10 @@ export default function NewChatModal({
     setTitle('')
     setCompany('')
     setJdText('')
+    setJobUrl('')
+    setLocation('')
+    setSource('')
+    setDetailsOpen(false)
     setTouched(false)
     setIsSubmitting(false)
     titleRef.current?.focus()
@@ -56,6 +81,8 @@ export default function NewChatModal({
 
   const trimmedJd = jdText.trim()
   const titleError = !title.trim() ? 'Add the job title.' : null
+  // The backend rejects anything that is not http(s), so say so here instead.
+  const jobUrlError = validateJobUrl(jobUrl)
   const jdError = !trimmedJd
     ? 'Paste the job description.'
     : trimmedJd.length < MIN_JD_LENGTH
@@ -65,10 +92,20 @@ export default function NewChatModal({
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
     setTouched(true)
-    if (titleError || jdError || isSubmitting) return
+    // A bad URL is inside a collapsed section, so open it: a validation
+    // message the user cannot see is the same as no message at all.
+    if (jobUrlError) setDetailsOpen(true)
+    if (titleError || jdError || jobUrlError || isSubmitting) return
 
     setIsSubmitting(true)
-    const created = await onCreate(title, company, jdText)
+    const created = await onCreate({
+      title,
+      company,
+      jdText,
+      jobUrl,
+      location,
+      source,
+    })
     setIsSubmitting(false)
     if (created) onClose()
   }
@@ -164,6 +201,78 @@ export default function NewChatModal({
               </span>
             </span>
           </label>
+
+          <div className="rounded-input border border-border">
+            <button
+              type="button"
+              onClick={() => setDetailsOpen((value) => !value)}
+              aria-expanded={detailsOpen}
+              className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2.5 text-left text-[12px] font-medium text-text-secondary"
+            >
+              {detailsOpen ? (
+                <ChevronDown size={14} />
+              ) : (
+                <ChevronRight size={14} />
+              )}
+              More details
+              <span className="ml-auto text-[11px] font-normal text-text-faint">
+                Optional — for your tracker
+              </span>
+            </button>
+
+            {detailsOpen && (
+              <div className="grid gap-4 border-t border-border px-3 py-3.5 sm:grid-cols-2">
+                <label className="flex flex-col gap-1.5 sm:col-span-2">
+                  <span className="text-[12px] font-medium text-text-secondary">
+                    Job URL
+                  </span>
+                  <input
+                    type="url"
+                    inputMode="url"
+                    value={jobUrl}
+                    onChange={(event) => setJobUrl(event.target.value)}
+                    placeholder="https://..."
+                    className={fieldClass}
+                  />
+                  {touched && jobUrlError && (
+                    <span className="text-[11px] text-coral-ink">
+                      {jobUrlError}
+                    </span>
+                  )}
+                </label>
+
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[12px] font-medium text-text-secondary">
+                    Location
+                  </span>
+                  <input
+                    value={location}
+                    onChange={(event) => setLocation(event.target.value)}
+                    placeholder="Remote — UK"
+                    className={fieldClass}
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[12px] font-medium text-text-secondary">
+                    Source
+                  </span>
+                  <select
+                    value={source}
+                    onChange={(event) => setSource(event.target.value)}
+                    className={fieldClass}
+                  >
+                    <option value="">Not set</option>
+                    {TRACKER_SOURCES.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
+          </div>
 
           {error && (
             <p className="rounded-input bg-coral-light px-3 py-2 text-[12px] text-coral-ink">

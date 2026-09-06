@@ -3,9 +3,13 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Gauge, Microscope } from 'lucide-react'
 import TopBar from '../components/common/TopBar'
 import Badge from '../components/common/Badge'
-import ConfirmModal from '../components/common/ConfirmModal'
+import DeleteAccountModal from '../components/auth/DeleteAccountModal'
 import Spinner from '../components/common/Spinner'
 import useAuth from '../hooks/useAuth'
+import {
+  DELETION_UNAVAILABLE_STATUS,
+  deleteAccount,
+} from '../services/account'
 import { absoluteDate } from '../lib/format'
 import {
   readDefaultAnalysisType,
@@ -78,8 +82,8 @@ const ANALYSIS_OPTIONS: {
  *
  * Everything here is either real or honestly labelled as not built yet: the
  * notifications toggle is disabled behind a "Coming soon" badge rather than
- * pretending to save, and account deletion says plainly that it has to go
- * through support because there is no endpoint for it.
+ * pretending to save, and account deletion says plainly when the server it is
+ * talking to has no way to carry it out.
  */
 export default function Settings() {
   const navigate = useNavigate()
@@ -91,6 +95,8 @@ export default function Settings() {
     readDefaultAnalysisType(),
   )
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   function chooseAnalysisType(value: AnalysisType) {
     setAnalysisType(value)
@@ -106,6 +112,44 @@ export default function Settings() {
   async function handleSignOut() {
     await endSession()
     navigate('/login', { replace: true })
+  }
+
+  /**
+   * Deletes the account, then signs out locally.
+   *
+   * `endSession` is what clears the persisted stores — profile, chats, tracker
+   * — so the next person on this machine does not see a flash of data that no
+   * longer exists on the server. The three failures are told apart because
+   * they mean different things: a 501 is a server that was never configured for
+   * deletion (nothing was touched), a 502 means the data is gone but the login
+   * is not, and anything else is worth retrying.
+   */
+  async function handleDeleteAccount() {
+    setIsDeleting(true)
+    setDeleteError(null)
+    const result = await deleteAccount()
+    setIsDeleting(false)
+
+    if (result.ok) {
+      setConfirmingDelete(false)
+      await endSession()
+      navigate('/', { replace: true })
+      pushToast('Your account and data were deleted', 'success')
+      return
+    }
+
+    if (result.status === DELETION_UNAVAILABLE_STATUS) {
+      setConfirmingDelete(false)
+      pushToast(
+        'Account deletion is coming soon — email support to delete your data',
+        'info',
+      )
+      return
+    }
+
+    // Kept in the dialog rather than a toast: the user is standing in front of
+    // the confirmation they just typed, and the message is about that action.
+    setDeleteError(result.message)
   }
 
   const memberSince = absoluteDate(user?.created_at)
@@ -253,7 +297,10 @@ export default function Settings() {
             </p>
             <button
               type="button"
-              onClick={() => setConfirmingDelete(true)}
+              onClick={() => {
+                setDeleteError(null)
+                setConfirmingDelete(true)
+              }}
               className="mt-4 min-h-[42px] rounded-btn border border-coral/40 bg-card px-4 py-2 text-[13px] font-medium text-coral-ink transition-colors hover:bg-coral-light"
             >
               Delete my account
@@ -262,20 +309,16 @@ export default function Settings() {
         </div>
       </div>
 
-      <ConfirmModal
+      <DeleteAccountModal
         open={confirmingDelete}
-        title="Delete your account?"
-        description="This would remove your profile, every job chat, and everything generated from them."
-        confirmLabel="Continue"
-        cancelLabel="Cancel"
-        onCancel={() => setConfirmingDelete(false)}
-        onConfirm={() => {
+        isDeleting={isDeleting}
+        error={deleteError}
+        onCancel={() => {
+          if (isDeleting) return
           setConfirmingDelete(false)
-          pushToast(
-            'Account deletion is coming soon — email support to delete your data',
-            'info',
-          )
+          setDeleteError(null)
         }}
+        onConfirm={() => void handleDeleteAccount()}
       />
     </div>
   )

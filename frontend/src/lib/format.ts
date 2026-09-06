@@ -86,3 +86,94 @@ export function entryTitle(entry: TrackerEntry): string {
 export function entryDate(entry: TrackerEntry): string {
   return entry.date_added ?? entry.created_at
 }
+
+/* ------------------------------------------------------------------ */
+/* Tracker dates                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `YYYY-MM-DD` for a native `<input type="date">`, from either an ISO
+ * timestamp or a date that is already in that shape.
+ *
+ * Deliberately built from the **local** calendar fields rather than
+ * `toISOString().slice(0, 10)`: an applied_at of 23:30 on the 3rd is UTC's
+ * 4th for anyone east of Greenwich, and a date input that reads a day later
+ * than the timestamp beside it looks like a bug in the tracker.
+ */
+export function toDateInputValue(value: string | null | undefined): string {
+  if (!value) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+/** A short calendar date — "3 Sep 2026" — for a `YYYY-MM-DD` or an ISO stamp. */
+export function shortDate(value: string | null | undefined): string {
+  if (!value) return ''
+  // A bare date string is parsed as UTC midnight by the Date constructor, so
+  // read it as local calendar fields instead of shifting it a day backwards.
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  const date = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
+}
+
+/** Local midnight for a `YYYY-MM-DD` or ISO value, or null when unparseable. */
+function startOfDay(value: string | null | undefined): Date | null {
+  if (!value) return null
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  const date = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  date.setHours(0, 0, 0, 0)
+  return date
+}
+
+/**
+ * Whole days from `value` until today: 0 today, 3 for three days ago, and a
+ * negative number for a date still ahead. Null when there is no usable date.
+ *
+ * Counted in whole local days rather than elapsed milliseconds, so "applied
+ * yesterday evening" is 1 day ago this morning rather than 0.
+ */
+export function daysSince(value: string | null | undefined): number | null {
+  const then = startOfDay(value)
+  if (!then) return null
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Math.round((today.getTime() - then.getTime()) / (24 * 60 * 60 * 1000))
+}
+
+/** "today", "yesterday", "5 days ago", "in 3 days" — or '' with no date. */
+export function daysAgoLabel(value: string | null | undefined): string {
+  const days = daysSince(value)
+  if (days === null) return ''
+  if (days === 0) return 'today'
+  if (days === 1) return 'yesterday'
+  if (days > 1) return `${days} days ago`
+  return days === -1 ? 'tomorrow' : `in ${Math.abs(days)} days`
+}
+
+/**
+ * Whether a next action falls inside the coming week — anything overdue, today,
+ * or up to `days` ahead. This is what the "Due this week" tile counts, and an
+ * action whose date has already passed is the most due thing there is.
+ */
+export function isDueWithin(
+  value: string | null | undefined,
+  days = 7,
+): boolean {
+  const elapsed = daysSince(value)
+  if (elapsed === null) return false
+  return elapsed >= -days
+}

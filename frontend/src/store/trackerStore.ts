@@ -3,10 +3,17 @@ import { persist } from 'zustand/middleware'
 import { apiErrorMessage } from '../services/api'
 import {
   listTrackerEntries,
+  updateTrackerEntry as updateTrackerEntryRequest,
   updateTrackerStatus,
 } from '../services/tracker'
 import { pushToast } from './toastStore'
-import type { ResumeType, TrackerEntry, TrackerStatus } from '../types'
+import type {
+  ResumeType,
+  TrackerEntry,
+  TrackerEntryPatch,
+  TrackerSort,
+  TrackerStatus,
+} from '../types'
 
 /**
  * Whether the app-load fetch has already run this session.
@@ -30,7 +37,16 @@ let hasFetched = false
 export interface TrackerState {
   entries: TrackerEntry[]
   filter: TrackerStatus | 'all'
+  /**
+   * The search box's text, matched against title, company and notes in the
+   * browser. Kept in the store rather than the page so it survives the shell
+   * remounting on a navigation, the same way the status filter does.
+   */
+  search: string
+  sort: TrackerSort
   isLoading: boolean
+  /** The chat id whose drawer edit is in flight, so its Save can spin. */
+  savingChatId: string | null
   error: string | null
   setEntries: (entries: TrackerEntry[]) => void
   /** Inserts newest-first, replacing any existing entry for the same chat. */
@@ -38,11 +54,19 @@ export interface TrackerState {
   updateEntry: (chatId: string, patch: Partial<TrackerEntry>) => void
   removeEntry: (chatId: string) => void
   setFilter: (filter: TrackerStatus | 'all') => void
+  setSearch: (search: string) => void
+  setSort: (sort: TrackerSort) => void
   setResumeType: (chatId: string, resumeType: ResumeType) => void
   /** GET /tracker. Skipped after the first call unless `force` is passed. */
   fetchEntries: (options?: { force?: boolean }) => Promise<void>
   /** Optimistic status change; the old status comes back if the PATCH fails. */
   updateStatus: (chatId: string, status: TrackerStatus) => Promise<boolean>
+  /**
+   * Optimistic multi-field edit from the drawer. The whole previous row comes
+   * back on failure — not just the fields that were sent — because a partial
+   * rollback would leave the drawer showing a mix of saved and unsaved values.
+   */
+  patchEntry: (chatId: string, patch: TrackerEntryPatch) => Promise<boolean>
   clearError: () => void
   reset: () => void
 }
@@ -52,7 +76,10 @@ export const useTrackerStore = create<TrackerState>()(
     (set, get) => ({
       entries: [],
       filter: 'all',
+      search: '',
+      sort: 'created_at',
       isLoading: false,
+      savingChatId: null,
       error: null,
 
       setEntries: (entries) => set({ entries }),
@@ -78,6 +105,8 @@ export const useTrackerStore = create<TrackerState>()(
         })),
 
       setFilter: (filter) => set({ filter }),
+      setSearch: (search) => set({ search }),
+      setSort: (sort) => set({ sort }),
       setResumeType: (chatId, resumeType) =>
         set((state) => ({
           entries: state.entries.map((entry) =>
@@ -139,19 +168,69 @@ export const useTrackerStore = create<TrackerState>()(
         }
       },
 
+      /**
+       * Saves a drawer edit.
+       *
+       * The row is written locally first so the drawer closes on a click
+       * rather than on a round trip, then replaced wholesale with the server's
+       * copy: `status: "applied"` fills `applied_at` in server-side, and
+       * `days_since_applied` and `next_action_due` are recomputed there too, so
+       * merging the patch back in would leave three fields quietly wrong.
+       */
+      patchEntry: async (chatId, patch) => {
+        const previous = get().entries.find((entry) => entry.chat_id === chatId)
+        if (!previous) return false
+
+        get().updateEntry(chatId, patch as Partial<TrackerEntry>)
+        set({ savingChatId: chatId })
+        try {
+          const updated = await updateTrackerEntryRequest(chatId, patch)
+          set((state) => ({
+            savingChatId: null,
+            entries: state.entries.map((entry) =>
+              entry.chat_id === chatId ? { ...entry, ...updated } : entry,
+            ),
+          }))
+          return true
+        } catch (error) {
+          // The entire previous row, so a rejected edit leaves nothing half
+          // applied behind it.
+          set((state) => ({
+            savingChatId: null,
+            entries: state.entries.map((entry) =>
+              entry.chat_id === chatId ? previous : entry,
+            ),
+          }))
+          pushToast(
+            apiErrorMessage(error, 'Those changes did not save.'),
+            'error',
+          )
+          return false
+        }
+      },
+
       clearError: () => set({ error: null }),
 
       reset: () => {
         hasFetched = false
-        set({ entries: [], filter: 'all', isLoading: false, error: null })
+        set({
+          entries: [],
+          filter: 'all',
+          search: '',
+          sort: 'created_at',
+          isLoading: false,
+          savingChatId: null,
+          error: null,
+        })
       },
     }),
     {
       name: 'applify-tracker',
-      // Bumped for the Phase 8 entry shape (job_title, date_added, fit_score
-      // alongside the Phase 6 names). Anything older is dropped: the fetch is
-      // cheaper than reshaping a stale blob.
-      version: 3,
+      // Bumped for the pipeline fields (applied_at, next_action, priority and
+      // the two server-computed flags). Anything older is dropped: the fetch is
+      // cheaper than reshaping a stale blob, and a persisted row with no
+      // `next_action_due` would draw the amber highlight wrong until it lands.
+      version: 4,
       migrate: () => ({ entries: [] }),
       partialize: (state) => ({ entries: state.entries }),
     },

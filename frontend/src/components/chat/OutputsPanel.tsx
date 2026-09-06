@@ -7,17 +7,26 @@ import {
   FileText,
   Mail,
   MessageSquare,
+  Printer,
   type LucideIcon,
 } from 'lucide-react'
+import Spinner from '../common/Spinner'
+import { downloadOutputFile, printOutputPath } from './exportActions'
 import { downloadTextFile } from '../../lib/download'
 import { absoluteDateTime, relativeDate, slugify } from '../../lib/format'
 import type { GeneratedOutput, OutputType } from '../../types'
 
 interface OutputsPanelProps {
   outputs: GeneratedOutput[]
+  /** Addresses the export routes. */
+  chatId?: string
   /** What a downloaded document is named after: the company, else the role. */
   documentName?: string
 }
+
+/** The shared look of the small icon actions on the right of a row. */
+const rowActionClass =
+  'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-input text-text-faint hover:text-text-secondary disabled:opacity-50 sm:h-8 sm:w-8'
 
 const OUTPUT_META: Record<
   OutputType,
@@ -52,12 +61,25 @@ const OUTPUT_META: Record<
  */
 export default function OutputsPanel({
   outputs,
+  chatId,
   documentName,
 }: OutputsPanelProps) {
   const [open, setOpen] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  /** The row whose .docx is being built, so only that button spins. */
+  const [exportingId, setExportingId] = useState<string | null>(null)
 
   if (outputs.length === 0) return null
+
+  const nameFor = (suffix: string) =>
+    `${slugify(documentName?.trim() || 'applify')}-${suffix}`
+
+  async function exportDocx(outputId: string, filename: string) {
+    if (!chatId || exportingId) return
+    setExportingId(outputId)
+    await downloadOutputFile(chatId, outputId, 'docx', filename)
+    setExportingId(null)
+  }
 
   return (
     <section className="rounded-box border border-border bg-card">
@@ -107,21 +129,64 @@ export default function OutputsPanel({
                     </span>
                   </button>
 
-                  {meta.fileSuffix && (
-                    <button
-                      type="button"
-                      aria-label={`Download ${meta.label} as markdown`}
-                      onClick={() =>
-                        downloadTextFile(
-                          `${slugify(documentName?.trim() || 'applify')}-${meta.fileSuffix}.md`,
-                          output.content,
-                        )
-                      }
-                      className="-mr-1.5 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-input text-text-faint hover:text-text-secondary sm:mr-0 sm:h-auto sm:w-auto"
-                    >
-                      <Download size={13} />
-                    </button>
-                  )}
+                  {/*
+                    Icon-only, because three labelled actions per row would be
+                    wider than the panel on a phone. Each carries its own
+                    accessible name and tooltip.
+                  */}
+                  <div className="flex flex-shrink-0 items-center">
+                    {meta.fileSuffix && (
+                      <button
+                        type="button"
+                        aria-label={`Download ${meta.label} as markdown`}
+                        title="Download .md"
+                        onClick={() =>
+                          downloadTextFile(
+                            `${nameFor(meta.fileSuffix as string)}.md`,
+                            output.content,
+                          )
+                        }
+                        className={rowActionClass}
+                      >
+                        <Download size={13} />
+                      </button>
+                    )}
+
+                    {meta.fileSuffix && chatId && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={exportingId === output.id}
+                          aria-label={`Download ${meta.label} as a Word document`}
+                          title="Download .docx"
+                          onClick={() =>
+                            void exportDocx(
+                              output.id,
+                              `${nameFor(meta.fileSuffix as string)}.docx`,
+                            )
+                          }
+                          className={rowActionClass}
+                        >
+                          {exportingId === output.id ? (
+                            <Spinner size={13} />
+                          ) : (
+                            <FileText size={13} />
+                          )}
+                        </button>
+
+                        <a
+                          href={printOutputPath(chatId, output.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`Print ${meta.label} or save it as a PDF`}
+                          title="Print / Save as PDF"
+                          className={rowActionClass}
+                        >
+                          <Printer size={13} />
+                        </a>
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 {expanded && (

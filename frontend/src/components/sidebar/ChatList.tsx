@@ -10,9 +10,30 @@ import useNavigationGuard, {
   UNSAVED_STAY_LABEL,
   UNSAVED_TITLE,
 } from '../../hooks/useNavigationGuard'
+import { PRIORITY_DOT_CLASSES, PRIORITY_LABELS } from '../tracker/statuses'
 import { useChatListStore } from '../../store/chatListStore'
+import { useTrackerStore } from '../../store/trackerStore'
 import { useUiStore } from '../../store/uiStore'
-import type { JobChat } from '../../types'
+import type { JobChat, TrackerPriority } from '../../types'
+
+/**
+ * The priority a tracker row carries, as a dot beside the chat title.
+ *
+ * Only a set priority draws one. An unset priority is not "medium" — it is an
+ * opinion the user has not offered — and a dot on every row would say nothing.
+ */
+function PriorityDot({ priority }: { priority?: TrackerPriority }) {
+  if (!priority) return null
+  const label = `${PRIORITY_LABELS[priority]} priority`
+
+  return (
+    <span
+      aria-label={label}
+      title={label}
+      className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${PRIORITY_DOT_CLASSES[priority]}`}
+    />
+  )
+}
 
 /**
  * The JOB CHATS list: every chat the user has, newest first, with the active
@@ -27,6 +48,10 @@ export default function ChatList() {
   const fetchChats = useChatListStore((state) => state.fetchChats)
   const deleteChat = useChatListStore((state) => state.deleteChat)
   const closeSidebar = useUiStore((state) => state.closeSidebar)
+  // Priority lives on the tracker row, not the chat, and the tracker store is
+  // already loaded by the app shell on every protected page — so the dot costs
+  // a lookup rather than a request.
+  const trackerEntries = useTrackerStore((state) => state.entries)
   const [pendingDelete, setPendingDelete] = useState<JobChat | null>(null)
   // A chat row is a way off the profile page too, so it asks about unsaved
   // profile edits exactly as the primary nav does.
@@ -47,6 +72,12 @@ export default function ChatList() {
     // Leaving the user on a deleted chat would only 404 on the next load.
     if (chat.id === activeId) navigate('/chat', { replace: true })
   }
+
+  // One pass over the tracker instead of a find() per chat row.
+  const priorityByChat = new Map<string, TrackerPriority>()
+  trackerEntries.forEach((entry) => {
+    if (entry.priority) priorityByChat.set(entry.chat_id, entry.priority)
+  })
 
   return (
     <div className="flex flex-col">
@@ -91,7 +122,10 @@ export default function ChatList() {
                   ].join(' ')
                 }
               >
-                <div className="truncate">{chat.title}</div>
+                <div className="flex items-center gap-1.5">
+                  <PriorityDot priority={priorityByChat.get(chat.id)} />
+                  <span className="truncate">{chat.title}</span>
+                </div>
                 <div className="mt-0.5 truncate text-[11px] text-text-faint nav:text-[10px]">
                   {chat.company ?? 'No company'}
                 </div>

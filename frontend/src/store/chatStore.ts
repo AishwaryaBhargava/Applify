@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import { apiErrorMessage, apiErrorStatus } from '../services/api'
-import { runAnalysis as runAnalysisRequest } from '../services/analysis'
+import {
+  runAnalysis as runAnalysisRequest,
+  runKeywordMatch as runKeywordMatchRequest,
+} from '../services/analysis'
 import { getChat } from '../services/chats'
 import { listMessages, streamMessage } from '../services/messages'
 import { listOutputs, streamOutput } from '../services/outputs'
@@ -13,6 +16,7 @@ import type {
   ChatMessage,
   GeneratedOutput,
   JobChat,
+  KeywordMatch,
   MessageKind,
   OutputType,
   StreamDoneEvent,
@@ -112,9 +116,12 @@ export interface ChatState {
   messages: ThreadMessage[]
   analysis: Analysis | null
   outputs: GeneratedOutput[]
+  /** The stored ATS keyword match, or null until one has been run here. */
+  keywordMatch: KeywordMatch | null
 
   isLoadingChat: boolean
   isAnalyzing: boolean
+  isMatchingKeywords: boolean
   isStreaming: boolean
   /** Id of the assistant message currently being streamed into. */
   streamingMessageId: string | null
@@ -125,6 +132,10 @@ export interface ChatState {
   analysisError: string | null
   /** HTTP status of that failure. 409 means "upload your resume first". */
   analysisErrorStatus: number | null
+  /** Failures of the last keyword request, shown inside the keyword panel. */
+  keywordError: string | null
+  /** Its HTTP status. 409 is the same "upload your resume first" as above. */
+  keywordErrorStatus: number | null
 
   setActiveChat: (chat: JobChat | null) => void
   setMessages: (messages: ThreadMessage[]) => void
@@ -135,9 +146,17 @@ export interface ChatState {
   /** Files a finished document and flips the tracker when it was a resume. */
   recordOutput: (kind: OutputType, event: StreamDoneEvent) => void
 
+  setKeywordMatch: (match: KeywordMatch | null) => void
+
   loadChat: (chatId: string) => Promise<void>
   fetchOutputs: (chatId?: string) => Promise<void>
   runAnalysis: (type: AnalysisType, force?: boolean) => Promise<void>
+  /**
+   * Runs the ATS keyword match. Without `force` the stored keyword list is
+   * reused and only the matching re-runs, which is what makes "I just added
+   * that skill, check again" cheap.
+   */
+  runKeywordMatch: (force?: boolean) => Promise<void>
 
   appendUserMessage: (content: string) => void
   startAssistantMessage: (messageId: string, kind: MessageKind) => void
@@ -161,6 +180,7 @@ export interface ChatState {
 
   clearError: () => void
   clearAnalysisError: () => void
+  clearKeywordError: () => void
   reset: () => void
 }
 
@@ -169,13 +189,17 @@ const emptyChat = {
   messages: [] as ThreadMessage[],
   analysis: null,
   outputs: [] as GeneratedOutput[],
+  keywordMatch: null,
   isLoadingChat: false,
   isAnalyzing: false,
+  isMatchingKeywords: false,
   isStreaming: false,
   streamingMessageId: null,
   error: null,
   analysisError: null,
   analysisErrorStatus: null,
+  keywordError: null,
+  keywordErrorStatus: null,
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -184,6 +208,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setActiveChat: (activeChat) => set({ activeChat }),
   setMessages: (messages) => set({ messages }),
   setAnalysis: (analysis) => set({ analysis }),
+  setKeywordMatch: (keywordMatch) => set({ keywordMatch }),
   setOutputs: (outputs) => set({ outputs }),
   addOutput: (output) =>
     set((state) => ({
@@ -233,6 +258,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearError: () => set({ error: null }),
   clearAnalysisError: () => set({ analysisError: null, analysisErrorStatus: null }),
+  clearKeywordError: () =>
+    set({ keywordError: null, keywordErrorStatus: null }),
 
   /**
    * Rebuilds the page from `GET /chats/{id}`: chat, full history, and the
@@ -250,10 +277,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       error: null,
       analysisError: null,
       analysisErrorStatus: null,
+      keywordError: null,
+      keywordErrorStatus: null,
       // Keep the current thread visible when reloading the same chat; clear it
       // when moving to a different one so the old messages never flash.
       ...(switching
-        ? { messages: [], analysis: null, activeChat: null, outputs: [] }
+        ? {
+            messages: [],
+            analysis: null,
+            activeChat: null,
+            outputs: [],
+            keywordMatch: null,
+          }
         : {}),
     })
 
@@ -261,11 +296,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const detail = await getChat(chatId)
       if (token !== loadToken) return
 
-      const { messages, analysis, ...chat } = detail
+      const { messages, analysis, keyword_match: keywordMatch, ...chat } = detail
       set({
         activeChat: chat,
         messages: fromServer(messages),
         analysis,
+        // A backend from before the keyword phase omits the key; `?? null`
+        // renders that as "not run yet" rather than as undefined.
+        keywordMatch: keywordMatch ?? null,
         isLoadingChat: false,
       })
       // The sidebar row may predate the analysis; keep the two in step.
@@ -364,6 +402,49 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : message,
         'error',
       )
+    }
+  },
+
+  /**
+   * Runs the ATS keyword match and keeps the result on the page.
+   *
+   * Unlike the analysis this does **not** refetch the thread: the match is a
+   * panel beside the chat, not a message in it, so nothing in the conversation
+   * changes. A failure is left in `keywordError` for the panel to render
+   * inline — including the 409 that means there is no profile to match
+   * against, which the panel answers with the same resume nudge the analysis
+   * picker uses.
+   */
+  runKeywordMatch: async (force = false) => {
+    const chat = get().activeChat
+    if (!chat || get().isMatchingKeywords) return
+
+    set({
+      isMatchingKeywords: true,
+      keywordError: null,
+      keywordErrorStatus: null,
+    })
+    try {
+      const keywordMatch = await runKeywordMatchRequest(chat.id, force)
+      // The user may have opened another chat while this ran; its keywords are
+      // not this chat's.
+      if (get().activeChat?.id !== chat.id) return
+      set({ keywordMatch, isMatchingKeywords: false })
+    } catch (error) {
+      if (get().activeChat?.id !== chat.id) return
+      const status = apiErrorStatus(error) ?? null
+      const message = apiErrorMessage(
+        error,
+        'The keyword match could not be completed. Please try again.',
+      )
+      set({
+        isMatchingKeywords: false,
+        keywordErrorStatus: status,
+        keywordError: message,
+      })
+      // The panel explains a missing profile in its own words; a toast saying
+      // it again would be the second copy of a message the user is looking at.
+      if (status !== NO_PROFILE_STATUS) pushToast(message, 'error')
     }
   },
 

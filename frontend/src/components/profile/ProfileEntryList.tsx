@@ -1,16 +1,26 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import ProfileField from './ProfileField'
-import { errorKey, type SectionErrorMap } from '../../lib/profileValidation'
+import { entryErrorKey, type SectionErrorMap } from '../../lib/profileValidation'
 
 /**
  * `lines` edits a `string[]` as a textarea, one item per line — the shape
- * highlights and technologies take. `toggle` edits a boolean.
+ * highlights and technologies take. `toggle` edits a boolean, `select` a short
+ * closed list of strings (employment type).
  */
-export type EntryFieldKind = 'text' | 'textarea' | 'lines' | 'toggle'
+export type EntryFieldKind = 'text' | 'textarea' | 'lines' | 'toggle' | 'select'
+
+/**
+ * A field name on the entry, or one level into a nested group of them —
+ * `links.github` on a project. The dotted form is what lets three URLs live in
+ * their own object on the wire and still edit as three ordinary boxes.
+ */
+export type EntryFieldKey<T> =
+  | Extract<keyof T, string>
+  | `${Extract<keyof T, string>}.${string}`
 
 export interface EntryFieldSpec<T> {
-  key: Extract<keyof T, string>
+  key: EntryFieldKey<T>
   label: string
   kind?: EntryFieldKind
   placeholder?: string
@@ -27,6 +37,8 @@ export interface EntryFieldSpec<T> {
   /** `lines` only: the per-item limit and how many items are allowed. */
   itemMaxLength?: number
   maxItems?: number
+  /** `select` only. The first option should be the blank "not set" one. */
+  options?: { value: string; label: string }[]
 }
 
 interface ProfileEntryListProps<T> {
@@ -202,10 +214,38 @@ function isEmptyEntry(entry: unknown): boolean {
   return Object.values(entry as Record<string, unknown>).every((value) => {
     if (Array.isArray(value)) return value.length === 0
     if (typeof value === 'string') return value.trim() === ''
+    // A nested group of fields — a project's `links` — counts as content when
+    // any box inside it does.
+    if (value !== null && typeof value === 'object') return isEmptyEntry(value)
     // Booleans do not count as content: a row where only "I work here now" is
     // ticked still says nothing about the job.
     return typeof value === 'boolean' || value === null || value === undefined
   })
+}
+
+/** Reads a field off an entry, following one level of dotted path. */
+function readField(entry: unknown, key: string): unknown {
+  if (!entry || typeof entry !== 'object') return undefined
+  const [head, ...rest] = key.split('.')
+  const value = (entry as Record<string, unknown>)[head]
+  return rest.length === 0 ? value : readField(value, rest.join('.'))
+}
+
+/**
+ * Returns a copy of `entry` with one (possibly nested) field replaced.
+ *
+ * The group is created if it is missing, so an entry stored before `links`
+ * existed still takes an edit to `links.github` rather than dropping it.
+ */
+function writeField<T>(entry: T, key: string, next: unknown): T {
+  const [head, ...rest] = key.split('.')
+  if (rest.length === 0) return { ...entry, [head]: next } as T
+  const current = (entry as Record<string, unknown>)[head]
+  const group = current && typeof current === 'object' ? current : {}
+  return {
+    ...entry,
+    [head]: writeField(group as Record<string, unknown>, rest.join('.'), next),
+  } as T
 }
 
 /**
@@ -254,9 +294,7 @@ export default function ProfileEntryList<T>({
 
   function patchEntry(index: number, key: string, next: unknown) {
     onChange(
-      entries.map((entry, i) =>
-        i === index ? ({ ...entry, [key]: next } as T) : entry,
-      ),
+      entries.map((entry, i) => (i === index ? writeField(entry, key, next) : entry)),
     )
   }
 
@@ -287,7 +325,7 @@ export default function ProfileEntryList<T>({
     <div className="flex flex-col gap-3">
       {entries.map((entry, index) => {
         const armed = confirmingRemove === index
-        const hasError = fields.some((field) => errors[errorKey(index, field.key)])
+        const hasError = fields.some((field) => errors[entryErrorKey(index, field.key)])
 
         return (
           <div
@@ -298,11 +336,51 @@ export default function ProfileEntryList<T>({
           >
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {fields.map((field) => {
-                const raw = (entry as Record<string, unknown>)[field.key]
+                const raw = readField(entry, field.key)
                 const kind = field.kind ?? 'text'
-                const span = field.wide || kind !== 'text' ? 'sm:col-span-2' : ''
+                // `select` is a half-width control like a text box; everything
+                // else that is not plain text takes the full row.
+                const span =
+                  field.wide || (kind !== 'text' && kind !== 'select')
+                    ? 'sm:col-span-2'
+                    : ''
                 const fieldId = `${listId}-${index}-${field.key}`
-                const error = errors[errorKey(index, field.key)]
+                const error = errors[entryErrorKey(index, field.key)]
+
+                if (kind === 'select') {
+                  const options = field.options ?? []
+                  const selected = toText(raw)
+                  // An imported value the list does not offer ("Seasonal") is
+                  // added rather than silently reset to blank on the next save.
+                  const choices =
+                    selected && !options.some((option) => option.value === selected)
+                      ? [...options, { value: selected, label: selected }]
+                      : options
+                  return (
+                    <div key={field.key} className={span}>
+                      <label
+                        htmlFor={fieldId}
+                        className="mb-1 block text-[11px] font-medium uppercase tracking-[0.7px] text-text-muted sm:text-[10px]"
+                      >
+                        {field.label}
+                      </label>
+                      <select
+                        id={fieldId}
+                        value={toText(raw)}
+                        onChange={(event) =>
+                          patchEntry(index, field.key, event.target.value)
+                        }
+                        className="w-full rounded-input border border-border-input bg-bg px-3 py-2 text-[16px] text-text-primary outline-none transition-colors focus:border-teal-medium focus:bg-card sm:text-[13px]"
+                      >
+                        {choices.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )
+                }
 
                 if (kind === 'toggle') {
                   return (

@@ -21,6 +21,10 @@ export interface WorkExperience {
   end_date: string | null
   current: boolean
   highlights: string[]
+  /** "Full-time", "Internship", ... Free-form; the editor offers a short list. */
+  employment_type: string | null
+  /** Recognition earned in this role, one per entry. */
+  awards: string[]
 }
 
 /** Mirrors `Education` in backend/app/api/schemas/profile.py. */
@@ -31,6 +35,10 @@ export interface Education {
   start_date: string | null
   end_date: string | null
   details: string | null
+  /** Free-form ("8.4/10", "3.9 GPA"): grading scales differ by country. */
+  gpa: string | null
+  coursework: string[]
+  honors: string[]
 }
 
 /** Mirrors `Certification` in backend/app/api/schemas/profile.py. */
@@ -38,6 +46,20 @@ export interface Certification {
   name: string | null
   issuer: string | null
   year: string | null
+  expires: string | null
+  credential_url: string | null
+  description: string | null
+}
+
+/**
+ * The three places a project usually lives. Kept as named fields rather than a
+ * list so the view can label each one ("Code", "Live", "Demo") instead of
+ * showing three anonymous URLs.
+ */
+export interface ProjectLinks {
+  github: string | null
+  live: string | null
+  demo: string | null
 }
 
 /** Mirrors `Project` in backend/app/api/schemas/profile.py. */
@@ -45,7 +67,30 @@ export interface Project {
   name: string | null
   description: string | null
   technologies: string[]
+  /**
+   * The original single link, kept for profiles parsed before `links` existed.
+   * The view falls back to it only when none of the three named links is set.
+   */
   link: string | null
+  start_date: string | null
+  end_date: string | null
+  highlights: string[]
+  links: ProjectLinks
+}
+
+/**
+ * A paper, article, or talk. Mirrors `Publication` in
+ * backend/app/api/schemas/profile.py — `title` is the one required field, so it
+ * is a plain string here (empty while a new row is being typed) rather than
+ * nullable like the rest.
+ */
+export interface Publication {
+  title: string
+  authors: string | null
+  url: string | null
+  /** "Published", "Under review", "Preprint" — free-form. */
+  status: string | null
+  year: string | null
 }
 
 /**
@@ -64,6 +109,7 @@ export interface ParsedProfile {
   certifications: Certification[]
   projects: Project[]
   achievements: string[]
+  publications: Publication[]
 }
 
 /** The section names PATCH /profile accepts, and gap detection reports on. */
@@ -123,6 +169,117 @@ export interface ProfileFieldError {
 export interface ProfileUpdateErrorResponse {
   detail?: string
   errors?: ProfileFieldError[]
+}
+
+/* ------------------------------------------------------------------ */
+/* Supplementary file import (POST /profile/import)                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What the import would do to one entry.
+ *
+ * `added` — no entry in the current profile matches it. `updated` — a matching
+ * entry gains or changes fields (`fields` names which). `unchanged` — the file
+ * says exactly what the profile already says, kept in the response so the
+ * review screen can account for every row rather than quietly dropping it.
+ * `removed` — the proposal drops an entry the profile has.
+ */
+export type ImportChangeKind = 'added' | 'updated' | 'unchanged' | 'removed'
+
+/** One proposed entry-level change, as the review screen lists it. */
+export interface ImportChange {
+  /** A `ProfileSectionKey` in practice; typed wide so an unknown section from
+   *  a newer backend still renders rather than being silently dropped. */
+  section: string
+  kind: ImportChangeKind
+  /** Human-readable identity of the entry ("Senior Engineer at Acme"). */
+  label: string
+  /** The normalised identity the diff matched on — stable across a re-import. */
+  key: string
+  /** Position in the *proposal's* section list; null for a removed entry. */
+  index: number | null
+  /** The field names that differ. Only meaningful for `updated`. */
+  fields: string[]
+}
+
+/** How many entries fall into each change kind. */
+export interface ImportChangeCounts {
+  added: number
+  updated: number
+  unchanged: number
+  removed: number
+}
+
+/**
+ * Totals across the whole proposal, plus the same counts per section.
+ *
+ * The totals are the server's own, not a sum the review screen computes: a
+ * change kind this build does not render yet still has to be counted honestly.
+ */
+export interface ImportSummary extends ImportChangeCounts {
+  sections: Record<string, ImportChangeCounts>
+}
+
+/**
+ * One sheet (or one logical block) the parser looked at. `skipped_reason` is
+ * set when it read the sheet and decided against using it — an empty tab, a
+ * layout it could not map — and the review screen shows it as an amber note so
+ * a user who expected that data knows why it is missing.
+ */
+export interface ImportSheet {
+  name: string
+  rows: number
+  cols: number
+  skipped_reason?: string | null
+}
+
+/** Where the proposal came from: the uploaded file and what was read from it. */
+export interface ImportSource {
+  /** Null when the upload carried no filename at all. */
+  filename: string | null
+  /** The parser's own label for the format: xlsx, csv, docx, pdf, txt, md, json. */
+  kind: string
+  sheets: ImportSheet[]
+}
+
+/**
+ * Body of `POST /profile/import` — a merge preview, saved nowhere.
+ *
+ * `proposal` is the *whole* profile as it would be after the merge, not a
+ * delta, which is exactly what `POST /profile/import/apply` takes back: the
+ * user picks sections, and each picked section is written wholesale.
+ */
+export interface ImportProposal {
+  proposal: ParsedProfile
+  changes: ImportChange[]
+  summary: ImportSummary
+  source: ImportSource
+  /** The extraction model that read the file. Shown as provenance. */
+  provider?: string | null
+  /**
+   * The text extracted from the uploaded file.
+   *
+   * Never rendered — it is carried purely so `/profile/import/apply` can be
+   * given it back. The server stores no upload and caches no proposal, so this
+   * round trip is the only way the applied profile's `raw_text` can keep the
+   * source the import came from.
+   */
+  document_text?: string | null
+}
+
+/**
+ * Body of `POST /profile/import/apply`.
+ *
+ * The server keeps nothing between the two calls — no upload stored, no
+ * proposal cached — so the reviewed proposal travels back in full, and
+ * `filename` is echoed with it for the raw-text header the backend writes.
+ */
+export interface ImportApplyRequest {
+  parsed_json: ParsedProfile
+  sections: ProfileSectionKey[]
+  filename?: string | null
+  /** The extracted document text, when the client still holds it. */
+  document_text?: string | null
 }
 
 /* ------------------------------------------------------------------ */
@@ -188,6 +345,73 @@ export interface ThreadMessage extends ChatMessage {
 export interface ChatDetail extends JobChat {
   messages: ChatMessage[]
   analysis: Analysis | null
+  /**
+   * The stored ATS keyword match, when one has been run for this chat.
+   * Optional as well as nullable: a backend from before the keyword phase
+   * omits the key entirely, and the panel's "not run yet" state is the same
+   * either way.
+   */
+  keyword_match?: KeywordMatch | null
+}
+
+/* ------------------------------------------------------------------ */
+/* ATS keyword match (POST /chats/{id}/keywords)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What kind of thing a keyword is. The panel groups by importance rather than
+ * category, but `skill` and `tool` are the two that can be added straight to
+ * the profile's skills list, which is why the distinction is carried.
+ */
+export type KeywordCategory =
+  | 'skill'
+  | 'tool'
+  | 'qualification'
+  | 'responsibility'
+  | 'soft_skill'
+  | 'domain'
+
+/** How badly the posting wants it. Required misses are the ones that matter. */
+export type KeywordImportance = 'required' | 'preferred'
+
+/**
+ * One keyword extracted from the job description, matched against the profile
+ * and — once a resume has been generated here — against that resume too.
+ *
+ * `in_resume` is `null` when there is no tailored resume to check against,
+ * which is a different statement from `false` ("there is one, and the keyword
+ * is not in it"). `evidence` is the profile snippet the match was found in.
+ */
+export interface KeywordMatchItem {
+  keyword: string
+  category: KeywordCategory
+  importance: KeywordImportance
+  /**
+   * The other spellings that counted as this keyword — the model's, plus the
+   * backend's built-in equivalences. This is what answers "why did *postgres*
+   * satisfy *PostgreSQL*", so it is shown beside the evidence rather than
+   * dropped. Defaulted server-side, so an older payload without it is fine.
+   */
+  aliases?: string[]
+  in_profile: boolean
+  in_resume: boolean | null
+  evidence: string | null
+}
+
+/** Body of POST /chats/{id}/keywords, and `keyword_match` on GET /chats/{id}. */
+export interface KeywordMatch {
+  /** 0-100. Weighted toward the required keywords, like an ATS would be. */
+  match_percent: number
+  required_matched: number
+  required_total: number
+  preferred_matched: number
+  preferred_total: number
+  keywords: KeywordMatchItem[]
+  /** The required keywords absent from the profile, for the missing column. */
+  missing_required: string[]
+  generated_at: string
+  /** Which model produced the extraction — "groq" or "azure". */
+  provider: string
 }
 
 /* ------------------------------------------------------------------ */
@@ -311,6 +535,58 @@ export type TrackerStatus =
 export type ResumeType = 'unaltered' | 'tailored'
 
 /**
+ * How much the user cares about this one. Nullable rather than defaulted to
+ * "medium": an unset priority is not an opinion, and drawing every untouched
+ * row with an amber dot would make the dot meaningless.
+ */
+export type TrackerPriority = 'low' | 'medium' | 'high'
+
+/** The sort keys `GET /tracker?sort=` accepts. Every one is descending. */
+export type TrackerSort =
+  | 'created_at'
+  | 'applied_at'
+  | 'next_action_date'
+  | 'fit_score'
+
+/**
+ * Where the posting came from. A free string on the wire — the select is a
+ * convenience, not a constraint, and a value from an older row still renders.
+ */
+export const TRACKER_SOURCES = [
+  'LinkedIn',
+  'Company site',
+  'Referral',
+  'Recruiter',
+  'Job board',
+  'Other',
+] as const
+
+export type TrackerSource = (typeof TRACKER_SOURCES)[number]
+
+/**
+ * The subset of a tracker row the user may edit, and exactly the body
+ * `PATCH /tracker/{chat_id}` accepts. Every field is optional: the drawer
+ * sends only what changed.
+ *
+ * Setting `status` to `applied` fills `applied_at` in server-side, so the
+ * response is adopted wholesale rather than merged field by field.
+ */
+export interface TrackerEntryPatch {
+  status?: TrackerStatus
+  job_url?: string | null
+  location?: string | null
+  salary?: string | null
+  source?: string | null
+  /** ISO timestamp. */
+  applied_at?: string | null
+  next_action?: string | null
+  /** `YYYY-MM-DD`, the value a native date input produces. */
+  next_action_date?: string | null
+  notes?: string | null
+  priority?: TrackerPriority | null
+}
+
+/**
  * A tracker row, flattened for the Phase 8 table: everything a row renders
  * comes from this one object. Mirrors `TrackerEntry` in
  * backend/app/api/schemas/tracker.py.
@@ -340,6 +616,31 @@ export interface TrackerEntry {
   fit_score?: number | null
   created_at: string
   updated_at: string
+
+  /* --- The pipeline fields the drawer edits. All optional, because the row
+     the sidebar writes optimistically has none of them yet. --- */
+
+  /** The posting itself, captured when the chat was created or added later. */
+  job_url?: string | null
+  location?: string | null
+  /** Free text — "£70-85k", "competitive". Never parsed. */
+  salary?: string | null
+  source?: string | null
+  /** ISO timestamp. Filled server-side the first time status becomes applied. */
+  applied_at?: string | null
+  /** "Follow up with the recruiter", "Prep the system design round". */
+  next_action?: string | null
+  /** `YYYY-MM-DD`. */
+  next_action_date?: string | null
+  notes?: string | null
+  priority?: TrackerPriority | null
+
+  /* --- Server-computed, read-only. --- */
+
+  /** Whole days between `applied_at` and now; null when never applied. */
+  days_since_applied?: number | null
+  /** True when `next_action_date` is today or already past. */
+  next_action_due?: boolean
 }
 
 /* ------------------------------------------------------------------ */

@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
 import ChatMessage from './ChatMessage'
 import TypingIndicator from './TypingIndicator'
+import { outputIdForMessage } from './exportActions'
 import useAutoScroll from '../../hooks/useAutoScroll'
-import type { ThreadMessage } from '../../types'
+import type { GeneratedOutput, ThreadMessage } from '../../types'
 
 interface ChatThreadProps {
   messages: ThreadMessage[]
@@ -17,6 +18,14 @@ interface ChatThreadProps {
   isConnecting?: boolean
   /** Passed to each bubble: what a downloaded document is named after. */
   documentName?: string
+  /** Addresses the export routes behind the .docx and print actions. */
+  chatId?: string
+  /**
+   * The documents filed in this chat, so a document bubble can be paired with
+   * the `generated_outputs` row it produced. Resolved here rather than in each
+   * bubble: the pairing needs the whole list, and the list belongs to the page.
+   */
+  outputs?: GeneratedOutput[]
 }
 
 /** Length of the newest message, so auto-scroll keeps up token by token. */
@@ -39,6 +48,8 @@ export default function ChatThread({
   header,
   isConnecting = false,
   documentName,
+  chatId,
+  outputs = [],
 }: ChatThreadProps) {
   const { ref } = useAutoScroll<HTMLDivElement>([
     messages.length,
@@ -69,6 +80,8 @@ export default function ChatThread({
             message={message}
             onRetry={index === lastErroredIndex ? onRetry : undefined}
             documentName={documentName}
+            chatId={chatId}
+            outputId={outputIdForMessage(outputs, message)}
           />
         ))}
 

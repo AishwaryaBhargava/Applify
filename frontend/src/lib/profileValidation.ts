@@ -32,6 +32,14 @@ export const PROFILE_LIMITS = {
   HIGHLIGHT: 500,
   SKILL: 60,
   ACHIEVEMENT: 500,
+  /** Short labels kept as free text: employment type, GPA, publication status. */
+  LABEL: 100,
+  /** A paper title: longer than a job title, shorter than an abstract. */
+  TITLE: 500,
+  AUTHORS: 1000,
+  /** Coursework and honors are capped per entry, not per profile. */
+  COURSEWORK_ITEMS: 50,
+  AWARDS: 20,
 } as const
 
 /* ------------------------------------------------------------------ */
@@ -49,6 +57,24 @@ export type SectionErrorMap = Record<string, string>
 /** The key a field's error lives under. */
 export function errorKey(index: number | null | undefined, field: string): string {
   return index === null || index === undefined ? SECTION_ERROR_KEY : `${index}.${field}`
+}
+
+/**
+ * The last segment of a possibly dotted field name — `links.github` -> `github`.
+ *
+ * Errors are keyed by the leaf, not the path, because that is how the backend
+ * reports them: it validates a project's link group as its own object, so an
+ * over-long URL comes back as `{"field": "github"}`. The editor reads the value
+ * by path and its error by leaf, and both sources of truth line up.
+ */
+export function leafField(field: string): string {
+  const parts = field.split('.')
+  return parts[parts.length - 1]
+}
+
+/** The error-map key for one (possibly nested) entry field. */
+export function entryErrorKey(index: number | null | undefined, field: string): string {
+  return errorKey(index, leafField(field))
 }
 
 /** The key section-level (non-row) errors live under. */
@@ -111,6 +137,11 @@ export function isBlankEntry(entry: unknown): boolean {
   for (const value of Object.values(entry as Record<string, unknown>)) {
     if (Array.isArray(value)) {
       if (cleanStringList(value).length > 0) return false
+    } else if (value !== null && typeof value === 'object') {
+      // A nested group of fields — a project's `links` — is content like any
+      // other. A project whose only filled-in box is its GitHub URL is a row
+      // the user meant to add, not a stray one to drop.
+      if (!isBlankEntry(value)) return false
     } else if (cleanString(value) !== null) {
       return false
     }
@@ -124,6 +155,7 @@ const ENTRY_SECTIONS = [
   'education',
   'certifications',
   'projects',
+  'publications',
 ] as const
 
 function isEntrySection(section: ProfileSectionKey): boolean {
@@ -171,14 +203,35 @@ interface ListRule {
   maxItems?: number
 }
 
-const { NAME, DATE, DETAIL, LINK, HIGHLIGHT, HIGHLIGHTS, SKILL } = PROFILE_LIMITS
+const {
+  NAME,
+  DATE,
+  DETAIL,
+  LINK,
+  HIGHLIGHT,
+  HIGHLIGHTS,
+  SKILL,
+  LABEL,
+  TITLE,
+  AUTHORS,
+  COURSEWORK_ITEMS,
+  AWARDS,
+} = PROFILE_LIMITS
 
-/** Per-section field rules, in the order the backend checks them. */
+/**
+ * Per-section field rules, in the order the backend checks them.
+ *
+ * A dotted `field` reads one level into the entry — `links.github` is the
+ * project's GitHub URL — and the error it produces is keyed by the same dotted
+ * name, so the input that owns it finds its own message the same way every
+ * other input does.
+ */
 const ENTRY_RULES: Record<string, FieldRule[]> = {
   work_experience: [
     { field: 'title', label: 'Job title', max: NAME, required: true },
     { field: 'company', label: 'Company', max: NAME, required: true },
     { field: 'location', label: 'Location', max: NAME },
+    { field: 'employment_type', label: 'Employment type', max: LABEL },
     { field: 'start_date', label: 'Start date', max: DATE },
     { field: 'end_date', label: 'End date', max: DATE },
   ],
@@ -188,17 +241,35 @@ const ENTRY_RULES: Record<string, FieldRule[]> = {
     { field: 'institution', label: 'Institution', max: NAME, required: true },
     { field: 'start_date', label: 'Start date', max: DATE },
     { field: 'end_date', label: 'End date', max: DATE },
+    { field: 'gpa', label: 'GPA', max: LABEL },
     { field: 'details', label: 'Details', max: DETAIL },
   ],
   certifications: [
     { field: 'name', label: 'Certification name', max: NAME, required: true },
     { field: 'issuer', label: 'Issuer', max: NAME },
     { field: 'year', label: 'Year', max: DATE },
+    { field: 'expires', label: 'Expiry', max: DATE },
+    { field: 'credential_url', label: 'Credential URL', max: LINK },
+    { field: 'description', label: 'Description', max: DETAIL },
   ],
   projects: [
     { field: 'name', label: 'Project name', max: NAME, required: true },
     { field: 'description', label: 'Description', max: DETAIL },
     { field: 'link', label: 'Link', max: LINK },
+    { field: 'start_date', label: 'Start date', max: DATE },
+    { field: 'end_date', label: 'End date', max: DATE },
+    { field: 'links.github', label: 'GitHub link', max: LINK },
+    { field: 'links.live', label: 'Live link', max: LINK },
+    { field: 'links.demo', label: 'Demo link', max: LINK },
+  ],
+  publications: [
+    { field: 'title', label: 'Publication title', max: TITLE, required: true },
+    // Author lists run long ("Smith J, Doe A, Nakamura K, ..."), so they get
+    // their own ceiling rather than the 200-character name one.
+    { field: 'authors', label: 'Authors', max: AUTHORS },
+    { field: 'status', label: 'Status', max: LABEL },
+    { field: 'year', label: 'Year', max: DATE },
+    { field: 'url', label: 'Link', max: LINK },
   ],
 }
 
@@ -211,8 +282,28 @@ const ENTRY_LIST_RULES: Record<string, ListRule[]> = {
       max: HIGHLIGHT,
       maxItems: HIGHLIGHTS,
     },
+    { field: 'awards', label: 'award', max: HIGHLIGHT, maxItems: AWARDS },
   ],
-  projects: [{ field: 'technologies', label: 'technology', max: SKILL }],
+  education: [
+    {
+      field: 'coursework',
+      label: 'course',
+      max: NAME,
+      maxItems: COURSEWORK_ITEMS,
+    },
+    // "honour", not "honor": the message has to read exactly as the backend's
+    // does, and the backend spells it the British way.
+    { field: 'honors', label: 'honour', max: NAME, maxItems: COURSEWORK_ITEMS },
+  ],
+  projects: [
+    { field: 'technologies', label: 'technology', max: SKILL },
+    {
+      field: 'highlights',
+      label: 'highlight',
+      max: HIGHLIGHT,
+      maxItems: HIGHLIGHTS,
+    },
+  ],
 }
 
 /**
@@ -228,6 +319,7 @@ export const REQUIRED_ENTRY_FIELDS: Record<string, string[]> = {
   education: ['institution'],
   certifications: ['name'],
   projects: ['name'],
+  publications: ['title'],
 }
 
 /** Max length for one entry field, for the input's `maxLength` attribute. */
@@ -252,6 +344,20 @@ function addError(
   errors.push({ section, index, field, message })
 }
 
+/**
+ * Reads a field off an entry, following one level of dotted path.
+ *
+ * `readEntryField(project, 'links.github')` is the GitHub URL; a missing group
+ * reads as absent rather than throwing, because a project stored before
+ * `links` existed has no group at all.
+ */
+export function readEntryField(entry: unknown, field: string): unknown {
+  if (!entry || typeof entry !== 'object') return undefined
+  const [head, ...rest] = field.split('.')
+  const value = (entry as Record<string, unknown>)[head]
+  return rest.length === 0 ? value : readEntryField(value, rest.join('.'))
+}
+
 /** `_strict_str`: required-ness and length for one string field. */
 function checkField(
   errors: ProfileFieldError[],
@@ -260,10 +366,12 @@ function checkField(
   section: string,
   index: number,
 ): string | null {
-  const value = cleanString(item[rule.field])
+  // Reported by leaf name, exactly as the backend reports it.
+  const field = leafField(rule.field)
+  const value = cleanString(readEntryField(item, rule.field))
   if (value === null) {
     if (rule.required) {
-      addError(errors, section, index, rule.field, `${rule.label} is required`)
+      addError(errors, section, index, field, `${rule.label} is required`)
     }
     return null
   }
@@ -272,7 +380,7 @@ function checkField(
       errors,
       section,
       index,
-      rule.field,
+      field,
       `${rule.label} must be ${rule.max} characters or less`,
     )
   }

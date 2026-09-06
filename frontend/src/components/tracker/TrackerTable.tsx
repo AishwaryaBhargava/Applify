@@ -7,18 +7,31 @@ interface TrackerTableProps {
   entries?: TrackerEntry[]
   isLoading?: boolean
   onStatusChange?: (chatId: string, status: TrackerStatus) => void
+  /** Opens the detail drawer for one row. */
+  onOpen?: (chatId: string) => void
   /** Shown when a filter, rather than an empty tracker, produced no rows. */
   isFiltered?: boolean
+  /** True when the empty result is a search miss rather than a status filter. */
+  isSearching?: boolean
 }
 
+/**
+ * The analysis depth used to have a column of its own. It moved into the
+ * drawer when the pipeline fields arrived: "quick or detailed" is a footnote
+ * about how a score was produced, and the two things it was displacing —
+ * when the application went out, and what you owe it next — are the questions
+ * a tracker exists to answer at a glance.
+ */
 const COLUMNS = [
   'Job title',
   'Company',
   'Added',
-  'Analysis',
+  'Applied',
+  'Next action',
   'Fit',
   'Resume',
   'Status',
+  '',
 ]
 
 /**
@@ -35,8 +48,8 @@ function SkeletonRows() {
           aria-hidden="true"
           className="animate-pulse border-b border-border last:border-0"
         >
-          {COLUMNS.map((column) => (
-            <td key={column} className="px-4 py-3.5">
+          {COLUMNS.map((column, index) => (
+            <td key={column || `spacer-${index}`} className="px-3 py-3.5">
               <div className="h-3 rounded-badge bg-surface-warm" />
             </td>
           ))}
@@ -47,7 +60,23 @@ function SkeletonRows() {
 }
 
 /** Nothing to show: either the tracker is empty, or the filter is too narrow. */
-function EmptyState({ isFiltered }: { isFiltered: boolean }) {
+function EmptyState({
+  isFiltered,
+  isSearching,
+}: {
+  isFiltered: boolean
+  isSearching: boolean
+}) {
+  if (isSearching) {
+    return (
+      <div className="px-4 py-12 text-center">
+        <p className="text-[13px] text-text-secondary">
+          Nothing matches that search.
+        </p>
+      </div>
+    )
+  }
+
   if (isFiltered) {
     return (
       <div className="px-4 py-12 text-center">
@@ -91,32 +120,38 @@ export default function TrackerTable({
   entries = [],
   isLoading = false,
   onStatusChange,
+  onOpen,
   isFiltered = false,
+  isSearching = false,
 }: TrackerTableProps) {
   const showEmpty = !isLoading && entries.length === 0
 
   return (
     <div className="overflow-hidden rounded-card border border-border bg-card">
       {showEmpty ? (
-        <EmptyState isFiltered={isFiltered} />
+        <EmptyState isFiltered={isFiltered} isSearching={isSearching} />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px] border-collapse text-left">
+          <table className="w-full min-w-[960px] border-collapse text-left">
             <thead>
               <tr className="border-b border-border bg-surface">
-                {COLUMNS.map((column) => (
+                {COLUMNS.map((column, index) => (
                   <th
-                    key={column}
+                    key={column || `spacer-${index}`}
                     scope="col"
-                    className={`whitespace-nowrap px-4 py-3 text-[11px] font-medium tracking-[0.8px] text-text-muted ${
+                    className={`whitespace-nowrap px-3 py-3 text-[11px] font-medium tracking-[0.8px] text-text-muted ${
                       column === 'Job title'
-                        ? 'min-w-[220px]'
+                        ? 'min-w-[200px]'
                         : column === 'Company'
-                          ? 'min-w-[160px]'
-                          : ''
+                          ? 'min-w-[130px]'
+                          : column === 'Next action'
+                            ? 'min-w-[170px]'
+                            : ''
                     }`}
                   >
-                    {column.toUpperCase()}
+                    {/* The last column holds the Details button; a heading over
+                        it would be a word describing a chevron. */}
+                    {column ? column.toUpperCase() : <span className="sr-only">Details</span>}
                   </th>
                 ))}
               </tr>
@@ -130,6 +165,7 @@ export default function TrackerTable({
                     key={entry.chat_id}
                     entry={entry}
                     onStatusChange={onStatusChange}
+                    onOpen={onOpen}
                   />
                 ))
               )}

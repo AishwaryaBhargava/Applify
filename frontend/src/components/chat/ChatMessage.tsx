@@ -9,10 +9,13 @@ import {
   FileText,
   Mail,
   MessageSquare,
+  Printer,
   RotateCcw,
   type LucideIcon,
 } from 'lucide-react'
 import TypingIndicator from './TypingIndicator'
+import Spinner from '../common/Spinner'
+import { downloadOutputFile, printOutputPath } from './exportActions'
 import { downloadTextFile } from '../../lib/download'
 import { slugify } from '../../lib/format'
 import type { MessageKind, ThreadMessage } from '../../types'
@@ -26,6 +29,15 @@ interface ChatMessageProps {
    * the role. "Kestrel Labs" becomes `Kestrel-Labs-resume.md`.
    */
   documentName?: string
+  /** Needed to address the export endpoint; omitted on the welcome thread. */
+  chatId?: string
+  /**
+   * The `generated_outputs` row this bubble was filed under, resolved by the
+   * thread. Null while a document is still streaming — it is not filed until
+   * the last token lands — which is exactly when the file actions must not be
+   * offered.
+   */
+  outputId?: string | null
 }
 
 interface KindChip {
@@ -71,8 +83,11 @@ export default function ChatMessage({
   message,
   onRetry,
   documentName,
+  chatId,
+  outputId,
 }: ChatMessageProps) {
   const [copied, setCopied] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(
@@ -101,11 +116,29 @@ export default function ChatMessage({
   const isTyping = Boolean(message.pending) && message.content.length === 0
   const isDocument = Boolean(chip?.fileSuffix) && !message.pending
 
+  const fileBase = `${slugify(documentName?.trim() || 'applify')}-${chip?.fileSuffix ?? 'document'}`
+
   const download = useCallback(() => {
     if (!chip?.fileSuffix) return
     const base = slugify(documentName?.trim() || 'applify')
     downloadTextFile(`${base}-${chip.fileSuffix}.md`, message.content)
   }, [chip, documentName, message.content])
+
+  /**
+   * The .docx is built server-side, so unlike the markdown download it is a
+   * request that can fail and has to be waited for.
+   */
+  const downloadDocx = useCallback(async () => {
+    if (!chatId || !outputId || exporting) return
+    setExporting(true)
+    await downloadOutputFile(chatId, outputId, 'docx', `${fileBase}.docx`)
+    setExporting(false)
+  }, [chatId, exporting, fileBase, outputId])
+
+  // One class for every action under a bubble: they are a row of equals, and
+  // they fade in together on hover once there is a mouse to hover with.
+  const actionClass =
+    'flex min-h-[40px] items-center gap-1 text-[12px] text-text-faint transition-opacity hover:text-text-secondary focus:opacity-100 disabled:opacity-50 sm:min-h-0 sm:text-[11px] sm:opacity-0 sm:group-hover:opacity-100'
 
   if (isUser) {
     return (
@@ -172,7 +205,7 @@ export default function ChatMessage({
             type="button"
             onClick={copy}
             aria-label="Copy message"
-            className="flex min-h-[40px] items-center gap-1 text-[12px] text-text-faint transition-opacity hover:text-text-secondary focus:opacity-100 sm:min-h-0 sm:text-[11px] sm:opacity-0 sm:group-hover:opacity-100"
+            className={actionClass}
           >
             {copied ? <Check size={12} /> : <Copy size={12} />}
             {copied ? 'Copied' : 'Copy'}
@@ -183,11 +216,43 @@ export default function ChatMessage({
               type="button"
               onClick={download}
               aria-label="Download as markdown"
-              className="flex min-h-[40px] items-center gap-1 text-[12px] text-text-faint transition-opacity hover:text-text-secondary focus:opacity-100 sm:min-h-0 sm:text-[11px] sm:opacity-0 sm:group-hover:opacity-100"
+              className={actionClass}
             >
               <Download size={12} />
               Download .md
             </button>
+          )}
+
+          {/* Both server-side actions need the stored output row behind the
+              bubble; a document that never finished streaming has none. */}
+          {isDocument && chatId && outputId && (
+            <>
+              <button
+                type="button"
+                onClick={() => void downloadDocx()}
+                disabled={exporting}
+                aria-label="Download as Word document"
+                className={actionClass}
+              >
+                {exporting ? <Spinner size={12} /> : <Download size={12} />}
+                Download .docx
+              </button>
+
+              {/*
+                A link rather than a button: opening the print view in a new tab
+                keeps the conversation exactly where it was, and a real anchor
+                is what lets the user middle-click or copy the address.
+              */}
+              <a
+                href={printOutputPath(chatId, outputId)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={actionClass}
+              >
+                <Printer size={12} />
+                Print / Save as PDF
+              </a>
+            </>
           )}
         </div>
       )}

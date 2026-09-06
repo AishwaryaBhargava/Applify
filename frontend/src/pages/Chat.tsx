@@ -10,6 +10,7 @@ import AnalysisSkeleton from '../components/chat/AnalysisSkeleton'
 import AnalysisTypeSelector from '../components/chat/AnalysisTypeSelector'
 import ChatInput from '../components/chat/ChatInput'
 import ChatThread from '../components/chat/ChatThread'
+import KeywordMatchPanel from '../components/chat/KeywordMatchPanel'
 import JobDescriptionPanel from '../components/chat/JobDescriptionPanel'
 import OutputActions from '../components/chat/OutputActions'
 import OutputsPanel from '../components/chat/OutputsPanel'
@@ -91,14 +92,19 @@ export default function Chat() {
   const activeChat = useChatStore((state) => state.activeChat)
   const messages = useChatStore((state) => state.messages)
   const analysis = useChatStore((state) => state.analysis)
+  const keywordMatch = useChatStore((state) => state.keywordMatch)
   const outputs = useChatStore((state) => state.outputs)
   const isLoadingChat = useChatStore((state) => state.isLoadingChat)
   const isAnalyzing = useChatStore((state) => state.isAnalyzing)
   const error = useChatStore((state) => state.error)
   const analysisError = useChatStore((state) => state.analysisError)
   const analysisErrorStatus = useChatStore((state) => state.analysisErrorStatus)
+  const isMatchingKeywords = useChatStore((state) => state.isMatchingKeywords)
+  const keywordError = useChatStore((state) => state.keywordError)
+  const keywordErrorStatus = useChatStore((state) => state.keywordErrorStatus)
   const loadChat = useChatStore((state) => state.loadChat)
   const runAnalysis = useChatStore((state) => state.runAnalysis)
+  const runKeywordMatch = useChatStore((state) => state.runKeywordMatch)
   const generateOutput = useChatStore((state) => state.generateOutput)
   const reset = useChatStore((state) => state.reset)
 
@@ -210,9 +216,25 @@ export default function Chat() {
       />
       <OutputsPanel
         outputs={outputs}
+        chatId={activeChat.id}
         documentName={activeChat.company ?? activeChat.title}
       />
       {analysisArea}
+      {/*
+        Under the analysis rather than beside it: the fit score is the
+        judgement the user came for, and the keyword match is what they act on
+        once they have read it. A chat with no job description has nothing to
+        extract keywords from, so the panel is not offered at all there.
+      */}
+      {activeChat.jd_text && (
+        <KeywordMatchPanel
+          match={keywordMatch}
+          isRunning={isMatchingKeywords}
+          onRun={(force) => void runKeywordMatch(force)}
+          error={keywordError}
+          needsResume={keywordErrorStatus === NO_PROFILE_STATUS}
+        />
+      )}
     </>
   )
 
@@ -241,6 +263,8 @@ export default function Chat() {
         header={header}
         isConnecting={isConnecting}
         documentName={activeChat.company ?? activeChat.title}
+        chatId={activeChat.id}
+        outputs={outputs}
       />
 
       {/* Offered only once there is an analysis to ground the document in, and
