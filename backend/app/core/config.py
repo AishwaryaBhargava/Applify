@@ -123,6 +123,20 @@ class Settings(BaseSettings):
     # Project base URL, e.g. https://abcdefgh.supabase.co -- used to locate the
     # JWKS endpoint for asymmetric (ES256/RS256) token verification.
     supabase_url: str = Field(default="", alias="SUPABASE_URL")
+    # Admin key for the Supabase Auth API. Only DELETE /account uses it, to
+    # remove the login after the user's rows are gone. Secret: it bypasses row
+    # level security entirely, so it is never logged and never sent to a
+    # browser. Unset means account deletion answers 501 rather than half
+    # deleting an account.
+    supabase_service_role_key: str = Field(
+        default="", alias="SUPABASE_SERVICE_ROLE_KEY"
+    )
+
+    # --- Private instance ---
+    # Comma-separated email allowlist. Empty (the default) means the instance is
+    # open to anyone the Supabase project will issue a token to. Non-empty turns
+    # it private: a valid token whose `email` claim is not listed is a 403.
+    allowed_user_emails_raw: str = Field(default="", alias="ALLOWED_USER_EMAILS")
 
     # --- CORS ---
     # Comma-separated in the environment, exposed as a list via allowed_origins.
@@ -179,6 +193,22 @@ class Settings(BaseSettings):
             if normalised != entry:
                 corrections.append((entry, normalised))
         return corrections
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def allowed_user_emails(self) -> frozenset[str]:
+        """ALLOWED_USER_EMAILS parsed, lower-cased, and de-duplicated.
+
+        Empty means the instance is open. Comparison is case-folded because an
+        email address is case-insensitive in practice and a capitalised entry in
+        a dashboard would otherwise lock its owner out with a 403 they could not
+        explain.
+        """
+        return frozenset(
+            entry.strip().lower()
+            for entry in self.allowed_user_emails_raw.split(",")
+            if entry.strip()
+        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

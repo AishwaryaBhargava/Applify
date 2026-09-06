@@ -98,7 +98,9 @@ Return ONLY a JSON object with exactly these keys and no others:
       "start_date": string,
       "end_date": string,
       "current": boolean,
-      "highlights": [string]
+      "employment_type": string,
+      "highlights": [string],
+      "awards": [string]
     }
   ],
   "education": [
@@ -108,15 +110,45 @@ Return ONLY a JSON object with exactly these keys and no others:
       "field": string,
       "start_date": string,
       "end_date": string,
-      "details": string
+      "details": string,
+      "gpa": string,
+      "coursework": [string],
+      "honors": [string]
     }
   ],
   "skills": [string],
-  "certifications": [{"name": string, "issuer": string, "year": string}],
-  "projects": [
-    {"name": string, "description": string, "technologies": [string], "link": string}
+  "certifications": [
+    {
+      "name": string,
+      "issuer": string,
+      "year": string,
+      "expires": string,
+      "credential_url": string,
+      "description": string
+    }
   ],
-  "achievements": [string]
+  "projects": [
+    {
+      "name": string,
+      "description": string,
+      "technologies": [string],
+      "start_date": string,
+      "end_date": string,
+      "highlights": [string],
+      "link": string,
+      "links": {"github": string, "live": string, "demo": string}
+    }
+  ],
+  "achievements": [string],
+  "publications": [
+    {
+      "title": string,
+      "authors": string,
+      "url": string,
+      "status": string,
+      "year": string
+    }
+  ]
 }
 
 Rules:
@@ -131,7 +163,10 @@ paragraph. If the resume has no such section, return "".
 Split a promotion within the same company into separate entries only when the \
 resume lists them as separate roles. highlights are the bullet points for that \
 role, each copied as its own string with leading bullet characters removed. \
-Keep the numbers and metrics exactly as written.
+Keep the numbers and metrics exactly as written. "employment_type" only when \
+the resume states one ("Full-time", "Part-time", "Internship", "Contract", \
+"Freelance"). "awards" holds recognition named for that specific role \
+("Employee of the Quarter, 2023"); leave it empty unless the resume names one.
 5. Dates stay as free text in the resume's own wording, e.g. "Jan 2022", \
 "2019", "March 2020". Do not reformat them and do not compute durations. Set \
 "current": true only when the role's end date reads as ongoing ("Present", \
@@ -142,14 +177,32 @@ Never a sentence, never a comma-joined list in one string, never a proficiency \
 level or a years-of-experience number. Split any grouped line like "Languages: \
 Python, Go, SQL" into separate entries and drop the category label. De-duplicate.
 7. education: one entry per qualification. "field" is the subject or major. \
-"details" holds a GPA, honours, or coursework note only if the resume states one.
+"gpa" is the grade exactly as written, with its scale ("8.7/10", "3.8/4.0", \
+"First Class"); never convert between scales. "coursework" and "honors" are \
+lists of short names ("Distributed Systems", "Dean's List 2018"), not \
+sentences. "details" keeps any remaining note that fits none of those.
 8. certifications: only named certifications or licences. Do not promote a \
-course, a workshop, or a degree into a certification.
+course, a workshop, or a degree into a certification. "expires" and \
+"credential_url" only when the resume states them; "description" only when the \
+resume adds a line about what the certification covers.
 9. projects: personal, academic, or professional projects the resume names \
 separately from a job. "technologies" follows the same short-token rule as \
-skills. "link" only when a URL is written in the resume.
-10. achievements: awards, honours, publications, patents, competition results, \
-and standalone accomplishments not already captured as a role's highlight.
+skills. "highlights" are the project's bullet points -- key contributions and \
+impact -- copied one per string. Put each URL in "links" under the slot that \
+fits: a source repository in "github", a deployed site in "live", a video or \
+walkthrough in "demo". Also set "link" to that same URL when the project has \
+exactly one. Only URLs actually written in the resume.
+10. achievements: awards, honours, competition results, and standalone \
+accomplishments not already captured as a role's highlight or as a \
+publication. When the resume gives an achievement a date or an awarding body, \
+write it as "Name -- Organization (Date): description", dropping any part the \
+resume does not state.
+10a. publications: papers, articles, patents, preprints, and conference talks \
+the person authored. "title" is required -- an entry without one is not a \
+publication. "authors" is the author list as one string in the resume's own \
+order. "status" is what the resume says ("Published", "Under review", \
+"Accepted", "Preprint"). Return an empty array when the resume names none, \
+which is the normal case.
 11. Ignore contact details, page headers and footers, page numbers, and any \
 "References available on request" line. Do not return name, email, phone, or \
 address.

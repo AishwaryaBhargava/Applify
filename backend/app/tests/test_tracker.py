@@ -10,7 +10,7 @@ either route.
 """
 
 import uuid
-from datetime import timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -19,6 +19,8 @@ from app.models.tracker_entry import TrackerEntry
 from app.tests.conftest import OTHER_USER_ID, TEST_USER_ID, FakeSession
 from app.tests.test_analysis import make_analysis
 from app.tests.test_chat import NOW, make_chat, make_tracker
+
+TODAY = datetime.now(timezone.utc).date()
 
 CHAT_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -311,3 +313,536 @@ def test_status_update_404s_on_an_unknown_chat(auth_client: TestClient) -> None:
     )
 
     assert response.status_code == 404
+
+
+# ==========================================================================
+# The application's own fields
+# ==========================================================================
+
+
+def test_tracker_row_carries_the_application_fields(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Everything the detail panel edits comes back on the row."""
+    chat = db.seed(make_chat())
+    db.seed(
+        make_tracker(
+            chat.id,
+            status="applied",
+            job_url="https://kestrel.example/jobs/42",
+            location="Remote (UK)",
+            salary="GBP 75,000",
+            source="LinkedIn",
+            applied_at=datetime.now(timezone.utc) - timedelta(days=3),
+            next_action="Follow up with the recruiter",
+            next_action_date=TODAY + timedelta(days=2),
+            notes="Referred by Priya.",
+            priority="high",
+        )
+    )
+
+    row = auth_client.get("/tracker").json()[0]
+
+    assert row["job_url"] == "https://kestrel.example/jobs/42"
+    assert row["location"] == "Remote (UK)"
+    assert row["salary"] == "GBP 75,000"
+    assert row["source"] == "LinkedIn"
+    assert row["next_action"] == "Follow up with the recruiter"
+    assert row["next_action_date"] == (TODAY + timedelta(days=2)).isoformat()
+    assert row["notes"] == "Referred by Priya."
+    assert row["priority"] == "high"
+
+
+def test_tracker_defaults_the_application_fields_to_null(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A new application has facts, not blanks pretending to be facts."""
+    seed_entry(db)
+
+    row = auth_client.get("/tracker").json()[0]
+
+    for field in (
+        "job_url",
+        "location",
+        "salary",
+        "source",
+        "applied_at",
+        "next_action",
+        "next_action_date",
+        "notes",
+        "priority",
+        "days_since_applied",
+    ):
+        assert row[field] is None, field
+    assert row["next_action_due"] is False
+
+
+def test_days_since_applied_counts_whole_days(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """The "how long has it been" column is derived per request, never stored."""
+    chat = db.seed(make_chat())
+    db.seed(
+        make_tracker(
+            chat.id,
+            status="applied",
+            applied_at=datetime.now(timezone.utc) - timedelta(days=5),
+        )
+    )
+
+    assert auth_client.get("/tracker").json()[0]["days_since_applied"] == 5
+
+
+def test_next_action_due_is_true_today_and_in_the_past(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Due means today or earlier -- a task due today is due."""
+    for title, day in (
+        ("Overdue", TODAY - timedelta(days=1)),
+        ("Today", TODAY),
+        ("Later", TODAY + timedelta(days=1)),
+    ):
+        chat = db.seed(make_chat(title=title))
+        db.seed(make_tracker(chat.id, next_action_date=day))
+
+    rows = {row["job_title"]: row for row in auth_client.get("/tracker").json()}
+
+    assert rows["Overdue"]["next_action_due"] is True
+    assert rows["Today"]["next_action_due"] is True
+    assert rows["Later"]["next_action_due"] is False
+
+
+# ==========================================================================
+# PATCH: partial updates
+# ==========================================================================
+
+
+def test_patch_accepts_any_subset_of_the_fields(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A partial update writes what it names and leaves the rest alone."""
+    chat, entry = seed_entry(db, notes="Keep me")
+
+    response = auth_client.patch(
+        "/tracker/{}".format(chat.id),
+        json={
+            "job_url": "https://kestrel.example/jobs/42",
+            "location": "Remote (UK)",
+            "salary": "GBP 75,000",
+            "source": "Referral",
+            "next_action": "Send the follow-up email",
+            "next_action_date": "2026-10-01",
+            "priority": "medium",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["job_url"] == "https://kestrel.example/jobs/42"
+    assert body["source"] == "Referral"
+    assert body["next_action_date"] == "2026-10-01"
+    assert body["priority"] == "medium"
+    # Untouched, and still on the row.
+    assert body["status"] == "not_applied"
+    assert entry.notes == "Keep me"
+    assert entry.next_action_date == date(2026, 10, 1)
+
+
+def test_patch_can_clear_a_field_with_null(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """An explicit null clears; an omitted field does not."""
+    chat, entry = seed_entry(db, notes="Old note", priority="high")
+
+    response = auth_client.patch(
+        "/tracker/{}".format(chat.id), json={"notes": None}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["notes"] is None
+    assert entry.notes is None
+    assert entry.priority == "high"
+
+
+def test_patch_trims_whitespace_only_text_to_null(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A field emptied in the UI arrives as spaces and is stored as nothing."""
+    chat, entry = seed_entry(db, notes="Old note")
+
+    auth_client.patch("/tracker/{}".format(chat.id), json={"notes": "   "})
+
+    assert entry.notes is None
+
+
+def test_patch_rejects_an_empty_body(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Updating nothing is a client bug, not a no-op."""
+    chat, _ = seed_entry(db)
+
+    assert auth_client.patch("/tracker/{}".format(chat.id), json={}).status_code == 422
+    assert db.commits == 0
+
+
+# ==========================================================================
+# PATCH: validation
+# ==========================================================================
+
+
+def test_patch_rejects_a_non_http_job_url(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Only http(s): a javascript: URL would be a link the frontend renders."""
+    chat, entry = seed_entry(db)
+
+    response = auth_client.patch(
+        "/tracker/{}".format(chat.id),
+        json={"job_url": "javascript:alert(1)"},
+    )
+
+    assert response.status_code == 422
+    assert entry.job_url is None
+    assert db.commits == 0
+
+
+def test_patch_accepts_both_http_schemes(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """http and https both round-trip; the URL is trimmed on the way in."""
+    chat, entry = seed_entry(db)
+
+    for url in ("http://example.com/a", "  https://example.com/b  "):
+        response = auth_client.patch(
+            "/tracker/{}".format(chat.id), json={"job_url": url}
+        )
+        assert response.status_code == 200
+        assert entry.job_url == url.strip()
+
+
+def test_patch_rejects_an_unknown_priority(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Priority is an enum, so "urgent" is a 422 and not a stored surprise."""
+    chat, entry = seed_entry(db)
+
+    response = auth_client.patch(
+        "/tracker/{}".format(chat.id), json={"priority": "urgent"}
+    )
+
+    assert response.status_code == 422
+    assert entry.priority is None
+
+
+def test_patch_rejects_over_long_notes_and_next_action(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Free text is bounded: 5000 characters of notes, 300 of next action."""
+    chat, _ = seed_entry(db)
+
+    long_notes = auth_client.patch(
+        "/tracker/{}".format(chat.id), json={"notes": "x" * 5001}
+    )
+    long_action = auth_client.patch(
+        "/tracker/{}".format(chat.id), json={"next_action": "x" * 301}
+    )
+
+    assert long_notes.status_code == 422
+    assert long_action.status_code == 422
+
+
+def test_patch_accepts_text_at_the_limit(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """The ceilings are inclusive, so a note of exactly 5000 characters fits."""
+    chat, _ = seed_entry(db)
+
+    response = auth_client.patch(
+        "/tracker/{}".format(chat.id),
+        json={"notes": "x" * 5000, "next_action": "y" * 300},
+    )
+
+    assert response.status_code == 200
+
+
+def test_patch_rejects_a_malformed_date(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Dates are ISO; "next tuesday" is a 422."""
+    chat, _ = seed_entry(db)
+
+    response = auth_client.patch(
+        "/tracker/{}".format(chat.id), json={"next_action_date": "next tuesday"}
+    )
+
+    assert response.status_code == 422
+
+
+# ==========================================================================
+# PATCH: the applied_at stamp
+# ==========================================================================
+
+
+def test_moving_to_applied_stamps_applied_at(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """The one piece of behaviour on this route: when did I send it?"""
+    chat, entry = seed_entry(db)
+    assert entry.applied_at is None
+
+    body = auth_client.patch(
+        "/tracker/{}".format(chat.id), json={"status": "applied"}
+    ).json()
+
+    assert entry.applied_at is not None
+    assert body["applied_at"] is not None
+    assert body["days_since_applied"] == 0
+
+
+def test_applied_at_survives_moving_back_to_not_applied(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Correcting the status does not unsend the application."""
+    chat, entry = seed_entry(db)
+    auth_client.patch("/tracker/{}".format(chat.id), json={"status": "applied"})
+    stamped = entry.applied_at
+
+    auth_client.patch("/tracker/{}".format(chat.id), json={"status": "not_applied"})
+
+    assert entry.applied_at == stamped
+
+
+def test_applied_at_is_not_restamped_on_a_later_status_change(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Moving applied to interviewing keeps the original send date."""
+    original = datetime.now(timezone.utc) - timedelta(days=9)
+    chat = db.seed(make_chat())
+    entry = db.seed(make_tracker(chat.id, status="applied", applied_at=original))
+
+    auth_client.patch("/tracker/{}".format(chat.id), json={"status": "interviewing"})
+
+    assert entry.applied_at == original
+
+
+def test_an_explicit_applied_at_is_not_overwritten(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Back-dating an application the user sent last week must stick."""
+    chat, entry = seed_entry(db)
+
+    auth_client.patch(
+        "/tracker/{}".format(chat.id),
+        json={"status": "applied", "applied_at": "2026-08-20T09:00:00Z"},
+    )
+
+    assert entry.applied_at == datetime(2026, 8, 20, 9, 0, tzinfo=timezone.utc)
+
+
+# ==========================================================================
+# GET /tracker: filtering and sorting
+# ==========================================================================
+
+
+def seed_three(db: FakeSession) -> None:
+    """Three applications differing in every sortable and filterable way."""
+    alpha = db.seed(
+        make_chat(title="Backend Engineer", company="Alpha", created_at=NOW)
+    )
+    db.seed(
+        make_tracker(
+            alpha.id,
+            status="applied",
+            applied_at=datetime.now(timezone.utc) - timedelta(days=1),
+            next_action_date=TODAY + timedelta(days=10),
+            notes="Great culture",
+        )
+    )
+    db.seed(make_analysis(alpha.id, fit_score=90))
+
+    beta = db.seed(
+        make_chat(
+            title="Data Engineer", company="Beta", created_at=NOW - timedelta(days=1)
+        )
+    )
+    db.seed(
+        make_tracker(
+            beta.id,
+            status="rejected",
+            applied_at=datetime.now(timezone.utc) - timedelta(days=20),
+            next_action_date=TODAY + timedelta(days=1),
+        )
+    )
+    db.seed(make_analysis(beta.id, fit_score=50))
+
+    gamma = db.seed(
+        make_chat(
+            title="Platform Engineer",
+            company="Gamma",
+            created_at=NOW - timedelta(days=2),
+        )
+    )
+    db.seed(make_tracker(gamma.id, notes="Found on the ALPHA jobs board"))
+
+
+def test_tracker_filters_by_status(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """The status parameter narrows the table to one column of the pipeline."""
+    seed_three(db)
+
+    rows = auth_client.get("/tracker?status=applied").json()
+
+    assert [row["company"] for row in rows] == ["Alpha"]
+
+
+def test_tracker_rejects_an_unknown_status_filter(auth_client: TestClient) -> None:
+    """The filter shares the row's enum, so a typo is a 422, not an empty table."""
+    assert auth_client.get("/tracker?status=ghosted").status_code == 422
+
+
+def test_tracker_search_matches_title_company_and_notes(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """q searches the three free-text fields a user would type into a search box."""
+    seed_three(db)
+
+    by_title = auth_client.get("/tracker?q=data").json()
+    by_company = auth_client.get("/tracker?q=beta").json()
+    by_notes = auth_client.get("/tracker?q=culture").json()
+
+    assert [row["company"] for row in by_title] == ["Beta"]
+    assert [row["company"] for row in by_company] == ["Beta"]
+    assert [row["company"] for row in by_notes] == ["Alpha"]
+
+
+def test_tracker_search_is_case_insensitive(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """One query finds both the company Alpha and the note that shouts ALPHA."""
+    seed_three(db)
+
+    companies = {
+        row["company"] for row in auth_client.get("/tracker?q=AlPhA").json()
+    }
+
+    assert companies == {"Alpha", "Gamma"}
+
+
+def test_tracker_search_and_status_combine(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Both filters apply, rather than the last one winning."""
+    seed_three(db)
+
+    rows = auth_client.get("/tracker?q=engineer&status=rejected").json()
+
+    assert [row["company"] for row in rows] == ["Beta"]
+
+
+def test_tracker_sorts_by_fit_score_with_unscored_last(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """Highest score first; a row with no analysis is unanswered, not zero."""
+    seed_three(db)
+
+    rows = auth_client.get("/tracker?sort=fit_score").json()
+
+    assert [row["company"] for row in rows] == ["Alpha", "Beta", "Gamma"]
+    assert rows[-1]["fit_score"] is None
+
+
+def test_tracker_sorts_by_applied_at_newest_first(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """The most recently sent application leads; the unsent one trails."""
+    seed_three(db)
+
+    rows = auth_client.get("/tracker?sort=applied_at").json()
+
+    assert [row["company"] for row in rows] == ["Alpha", "Beta", "Gamma"]
+
+
+def test_tracker_sorts_by_next_action_date_soonest_first(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """The one exception to newest-first: the follow-up due soonest comes first."""
+    seed_three(db)
+
+    rows = auth_client.get("/tracker?sort=next_action_date").json()
+
+    assert [row["company"] for row in rows] == ["Beta", "Alpha", "Gamma"]
+
+
+def test_tracker_defaults_to_created_at_descending(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """No sort parameter means the same order the tracker has always had."""
+    seed_three(db)
+
+    rows = auth_client.get("/tracker").json()
+
+    assert [row["company"] for row in rows] == ["Alpha", "Beta", "Gamma"]
+
+
+def test_tracker_rejects_an_unknown_sort(auth_client: TestClient) -> None:
+    """Sorting by a column that does not exist is a 422, not a silent default."""
+    assert auth_client.get("/tracker?sort=salary").status_code == 422
+
+
+# ==========================================================================
+# POST /chats writes the application fields it is given
+# ==========================================================================
+
+
+def test_create_chat_stores_the_application_fields_on_the_tracker(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """The posting's URL is captured once, while the user still has it open."""
+    response = auth_client.post(
+        "/chats",
+        json={
+            "title": "Backend Engineer",
+            "company": "Kestrel",
+            "jd_text": "Python and Postgres.",
+            "job_url": "https://kestrel.example/jobs/42",
+            "location": "Remote (UK)",
+            "source": "LinkedIn",
+        },
+    )
+
+    assert response.status_code == 201
+    entry = db.rows(TrackerEntry)[0]
+    assert entry.job_url == "https://kestrel.example/jobs/42"
+    assert entry.location == "Remote (UK)"
+    assert entry.source == "LinkedIn"
+
+    row = auth_client.get("/tracker").json()[0]
+    assert row["job_url"] == "https://kestrel.example/jobs/42"
+    assert row["source"] == "LinkedIn"
+
+
+def test_create_chat_rejects_a_non_http_job_url(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """The same URL rule as the tracker's, enforced at the point of entry."""
+    response = auth_client.post(
+        "/chats",
+        json={"title": "Backend Engineer", "job_url": "ftp://example.com/jd"},
+    )
+
+    assert response.status_code == 422
+    assert db.rows(TrackerEntry) == []
+
+
+def test_create_chat_still_works_without_the_new_fields(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """All three are optional; the old request body is still the whole story."""
+    response = auth_client.post("/chats", json={"title": "Backend Engineer"})
+
+    assert response.status_code == 201
+    entry = db.rows(TrackerEntry)[0]
+    assert entry.job_url is None
+    assert entry.location is None
+    assert entry.source is None

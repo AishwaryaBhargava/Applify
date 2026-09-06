@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.schemas.profile import (
+    PROFILE_SECTIONS,
     ParsedProfile,
     ProfileValidationError,
     coerce_parsed_profile,
@@ -499,7 +500,7 @@ def test_get_profile_returns_404_when_absent(auth_client: TestClient) -> None:
 def test_get_profile_returns_stored_profile(
     auth_client: TestClient, db: FakeSession, test_user_uuid: uuid.UUID
 ) -> None:
-    """A stored profile comes back with all seven sections."""
+    """A stored profile comes back with every section."""
     db.seed(make_profile())
 
     response = auth_client.get("/profile")
@@ -508,15 +509,7 @@ def test_get_profile_returns_stored_profile(
     body = response.json()
     assert body["user_id"] == str(test_user_uuid)
     assert body["parsed_json"]["work_experience"][0]["title"] == "Senior Backend Engineer"
-    assert set(body["parsed_json"]) == {
-        "summary",
-        "work_experience",
-        "education",
-        "skills",
-        "certifications",
-        "projects",
-        "achievements",
-    }
+    assert set(body["parsed_json"]) == set(PROFILE_SECTIONS)
 
 
 # ==========================================================================
@@ -1219,7 +1212,7 @@ def test_merge_profile_updates_leaves_omitted_sections_alone() -> None:
 
 
 def test_merge_profile_updates_fills_every_section() -> None:
-    """The result always carries all seven sections, so callers need no guards."""
+    """The result always carries every section, so callers need no guards."""
     merged = profile_service.merge_profile_updates(None, {"skills": ["Rust"]})
 
     assert merged["skills"] == ["Rust"]
@@ -1255,7 +1248,7 @@ def gap_ids(parsed_json) -> set:
 
 
 def test_detect_gaps_flags_every_empty_section() -> None:
-    """An empty profile is missing all seven sections."""
+    """An empty profile is missing every gap-checked section."""
     ids = gap_ids({})
 
     assert ids == {
@@ -1447,3 +1440,367 @@ def test_live_extract_profile() -> None:
     serialised = json.dumps(profile.model_dump()).lower()
     assert "jordan.rivera@example.com" not in serialised
     assert "+91 90000" not in serialised
+
+
+# ==========================================================================
+# The extended schema
+# ==========================================================================
+
+# Every field added here is optional or defaulted, so a profile stored before
+# any of them existed has to load unchanged. That is the first test below, and
+# it is the one that would break a live deployment if the schema ever stopped
+# being additive.
+
+# A profile in the shape the database held before the schema was extended.
+LEGACY_PARSED_JSON = {
+    "summary": "Backend engineer.",
+    "work_experience": [
+        {
+            "title": "Senior Backend Engineer",
+            "company": "Kestrel Payments",
+            "location": "Bengaluru",
+            "start_date": "March 2022",
+            "end_date": "",
+            "current": True,
+            "highlights": ["Cut reconciliation from 40 minutes to 6."],
+        }
+    ],
+    "education": [
+        {
+            "degree": "Master of Technology",
+            "institution": "IIT Hyderabad",
+            "field": "Computer Science",
+            "start_date": "2017",
+            "end_date": "2019",
+            "details": "CGPA 8.7/10.",
+        }
+    ],
+    "skills": ["Python"],
+    "certifications": [{"name": "CKA", "issuer": "CNCF", "year": "2023"}],
+    "projects": [
+        {
+            "name": "Ledgerlite",
+            "description": "A ledger library.",
+            "technologies": ["Go"],
+            "link": "github.com/example/ledgerlite",
+        }
+    ],
+    "achievements": ["Speaker, IndiaFOSS 2023."],
+}
+
+
+def test_a_legacy_profile_loads_unchanged() -> None:
+    """Stored JSON from before the extension keeps every value it had."""
+    profile = ParsedProfile.model_validate(LEGACY_PARSED_JSON)
+
+    assert profile.summary == "Backend engineer."
+    assert profile.work_experience[0].company == "Kestrel Payments"
+    assert profile.work_experience[0].highlights == [
+        "Cut reconciliation from 40 minutes to 6."
+    ]
+    assert profile.education[0].details == "CGPA 8.7/10."
+    assert profile.certifications[0].year == "2023"
+    assert profile.projects[0].link == "github.com/example/ledgerlite"
+    assert profile.achievements == ["Speaker, IndiaFOSS 2023."]
+
+
+def test_a_legacy_profile_gains_the_new_fields_as_empty() -> None:
+    """The new fields default rather than appearing as nulls the UI must guard."""
+    profile = ParsedProfile.model_validate(LEGACY_PARSED_JSON)
+
+    assert profile.publications == []
+    assert profile.work_experience[0].employment_type is None
+    assert profile.work_experience[0].awards == []
+    assert profile.education[0].gpa is None
+    assert profile.education[0].coursework == []
+    assert profile.projects[0].highlights == []
+    assert profile.projects[0].links.github is None
+    assert profile.certifications[0].expires is None
+
+
+def test_coercion_reads_every_new_field() -> None:
+    """The lenient pass fills the new fields from model output."""
+    profile = coerce_parsed_profile(
+        {
+            "work_experience": [
+                {
+                    "title": "Backend Engineer",
+                    "company": "Aldermill",
+                    "employment_type": "Internship",
+                    "awards": ["Intern of the Year", "", "Intern of the Year"],
+                }
+            ],
+            "education": [
+                {
+                    "institution": "IIT Hyderabad",
+                    "degree": "M.Tech",
+                    "gpa": "8.7/10",
+                    "coursework": ["Compilers", "Distributed Systems"],
+                    "honors": ["Gold medal"],
+                }
+            ],
+            "certifications": [
+                {
+                    "name": "CKA",
+                    "expires": "2026",
+                    "credential_url": "https://example.com/cka",
+                    "description": "Kubernetes administration.",
+                }
+            ],
+            "projects": [
+                {
+                    "name": "Tracewire",
+                    "start_date": "2023",
+                    "end_date": "2024",
+                    "highlights": ["Sampled by error budget burn"],
+                    "links": {"github": "https://github.com/example/tracewire"},
+                }
+            ],
+            "publications": [
+                {
+                    "title": "Reconciling at Scale",
+                    "authors": "Rivera, J.",
+                    "url": "https://example.com/paper",
+                    "status": "Published",
+                    "year": "2023",
+                }
+            ],
+        }
+    )
+
+    role = profile.work_experience[0]
+    assert role.employment_type == "Internship"
+    # Blanks and repeats are dropped, as everywhere else in the lenient pass.
+    assert role.awards == ["Intern of the Year"]
+    education = profile.education[0]
+    assert education.gpa == "8.7/10"
+    assert education.coursework == ["Compilers", "Distributed Systems"]
+    assert education.honors == ["Gold medal"]
+    assert profile.certifications[0].expires == "2026"
+    assert profile.certifications[0].description == "Kubernetes administration."
+    assert profile.projects[0].highlights == ["Sampled by error budget burn"]
+    assert profile.publications[0].status == "Published"
+
+
+def test_coercion_backfills_the_legacy_project_link() -> None:
+    """A project with only `links` still exposes `link` for older readers."""
+    profile = coerce_parsed_profile(
+        {
+            "projects": [
+                {"name": "A", "links": {"live": "https://a.example.com"}},
+                {"name": "B", "links": {"github": "https://github.com/b"}},
+                {"name": "C", "link": "https://c.example.com", "links": {}},
+            ]
+        }
+    )
+
+    assert profile.projects[0].link == "https://a.example.com"
+    assert profile.projects[1].link == "https://github.com/b"
+    # An explicit link is never overwritten by the links block.
+    assert profile.projects[2].link == "https://c.example.com"
+
+
+def test_coercion_reads_a_bare_string_publication() -> None:
+    """A model that returns a list of titles is still usable."""
+    profile = coerce_parsed_profile({"publications": ["Reconciling at Scale", "  "]})
+    assert [item.title for item in profile.publications] == ["Reconciling at Scale"]
+
+
+def test_patch_profile_accepts_a_publication(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A titled publication is stored with its metadata."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={
+            "publications": [
+                {
+                    "title": "Reconciling at Scale",
+                    "authors": "Rivera, J.",
+                    "status": "Published",
+                    "year": "2023",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    stored = response.json()["parsed_json"]["publications"]
+    assert stored[0]["title"] == "Reconciling at Scale"
+    assert stored[0]["authors"] == "Rivera, J."
+
+
+def test_patch_profile_rejects_a_publication_without_a_title(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A partially filled publication is a 422 naming the field."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile", json={"publications": [{"authors": "Rivera, J."}]}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {
+            "section": "publications",
+            "index": 0,
+            "field": "title",
+            "message": "Publication title is required",
+        }
+    ]
+
+
+def test_patch_profile_drops_a_blank_publication(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """An entirely empty row is one the editor added, not a mistake."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={"publications": [{"title": "A Paper"}, {"title": "", "year": ""}]},
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["parsed_json"]["publications"]) == 1
+
+
+def test_patch_profile_keeps_a_project_that_only_has_links(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """A row whose only content is a URL is not a blank row."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={
+            "projects": [
+                {"name": "Tracewire", "links": {"github": "https://github.com/x"}}
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    project = response.json()["parsed_json"]["projects"][0]
+    assert project["links"]["github"] == "https://github.com/x"
+    assert project["link"] == "https://github.com/x"
+
+
+def test_patch_profile_rejects_an_over_long_new_field(
+    auth_client: TestClient, db: FakeSession
+) -> None:
+    """The new fields carry length limits like every other one."""
+    db.seed(make_profile())
+
+    response = auth_client.patch(
+        "/profile",
+        json={
+            "work_experience": [
+                {
+                    "title": "Engineer",
+                    "company": "Kestrel",
+                    "employment_type": "x" * 101,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"][0]["field"] == "employment_type"
+
+
+def test_detect_gaps_never_asks_for_publications() -> None:
+    """Most people have none, and a nudge that can only be dismissed is noise."""
+    gaps = profile_service.detect_gaps({})
+    assert not any(gap["section"] == "publications" for gap in gaps)
+    assert "publications-missing" not in {gap["id"] for gap in gaps}
+
+
+# ==========================================================================
+# Plain-text rendering
+# ==========================================================================
+
+
+def test_render_profile_text_includes_every_section() -> None:
+    """The full rendering is complete: nothing capped, nothing summarised."""
+    parsed = {
+        **LEGACY_PARSED_JSON,
+        "work_experience": [
+            {
+                **LEGACY_PARSED_JSON["work_experience"][0],
+                "employment_type": "Full-time",
+                "awards": ["Engineer of the Year"],
+            }
+        ],
+        "education": [
+            {
+                **LEGACY_PARSED_JSON["education"][0],
+                "gpa": "8.7/10",
+                "coursework": ["Compilers"],
+                "honors": ["Gold medal"],
+            }
+        ],
+        "projects": [
+            {
+                **LEGACY_PARSED_JSON["projects"][0],
+                "highlights": ["Used by two fintech teams"],
+                "links": {"github": "https://github.com/example/ledgerlite"},
+            }
+        ],
+        "publications": [
+            {"title": "Reconciling at Scale", "authors": "Rivera, J.", "year": "2023"}
+        ],
+    }
+
+    text = profile_service.render_profile_text(parsed)
+
+    for heading in (
+        "SUMMARY",
+        "WORK EXPERIENCE",
+        "EDUCATION",
+        "SKILLS",
+        "CERTIFICATIONS",
+        "PROJECTS",
+        "ACHIEVEMENTS",
+        "PUBLICATIONS",
+    ):
+        assert heading in text
+
+    assert "Senior Backend Engineer at Kestrel Payments" in text
+    assert "March 2022 - Present" in text
+    assert "Full-time" in text
+    assert "Engineer of the Year" in text
+    assert "GPA: 8.7/10" in text
+    assert "Coursework: Compilers" in text
+    assert "Honours: Gold medal" in text
+    assert "Used by two fintech teams" in text
+    assert "GitHub: https://github.com/example/ledgerlite" in text
+    assert "Reconciling at Scale" in text
+
+
+def test_render_profile_text_omits_empty_sections() -> None:
+    """An empty profile renders as nothing, not as a page of headings."""
+    assert profile_service.render_profile_text({}) == ""
+    assert profile_service.render_profile_text(None) == ""
+
+    only_skills = profile_service.render_profile_text({"skills": ["Python", "Go"]})
+    assert only_skills == "SKILLS\nPython, Go"
+
+
+def test_render_profile_text_does_not_repeat_a_project_link() -> None:
+    """`link` mirrors `links.github`, so it is printed once."""
+    text = profile_service.render_profile_text(
+        {
+            "projects": [
+                {
+                    "name": "Ledgerlite",
+                    "link": "https://github.com/x",
+                    "links": {"github": "https://github.com/x"},
+                }
+            ]
+        }
+    )
+    assert text.count("https://github.com/x") == 1

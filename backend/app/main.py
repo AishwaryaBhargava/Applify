@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import (
+    account,
     analysis,
     auth,
     chats,
@@ -107,3 +108,4 @@ app.include_router(messages.router)
 app.include_router(analysis.router)
 app.include_router(outputs.router)
 app.include_router(tracker.router)
+app.include_router(account.router)

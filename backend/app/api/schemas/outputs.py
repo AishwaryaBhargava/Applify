@@ -15,6 +15,18 @@ class OutputType(str, Enum):
     ANSWER = "answer"
 
 
+class ExportFormat(str, Enum):
+    """The file formats a generated document can be downloaded as.
+
+    ``docx`` is the one people actually upload to an application form; ``md`` is
+    the raw document, for the user who wants to paste it somewhere else without
+    a rendering step in between.
+    """
+
+    DOCX = "docx"
+    MD = "md"
+
+
 class OutputRequest(BaseModel):
     """Ask for a generated resume, cover letter, or application answer.
 

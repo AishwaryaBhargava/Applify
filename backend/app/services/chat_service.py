@@ -238,6 +238,9 @@ def create_chat(
     title: str,
     company: str | None = None,
     jd_text: str | None = None,
+    job_url: str | None = None,
+    location: str | None = None,
+    source: str | None = None,
 ) -> tuple[JobChat, TrackerEntry]:
     """Create a job chat and open its tracker entry in one transaction.
 
@@ -245,6 +248,11 @@ def create_chat(
     user is considering, so the row exists from the moment the chat does. Both
     inserts share one commit -- a chat without a tracker entry would be invisible
     in the tracker forever.
+
+    ``job_url``, ``location`` and ``source`` describe the *application* rather
+    than the conversation, so they are written onto the tracker row even though
+    they arrive with the chat. Capturing them at creation is the whole point:
+    the user has the posting open in the next tab exactly once.
 
     Returns:
         The new ``(chat, tracker_entry)`` pair.
@@ -261,6 +269,7 @@ def create_chat(
         analysis_type=None,
         created_at=now,
         deleted_at=None,
+        keyword_match=None,
     )
     entry = TrackerEntry(
         id=uuid.uuid4(),
@@ -268,6 +277,9 @@ def create_chat(
         user_id=owner,
         status="not_applied",
         resume_type="unaltered",
+        job_url=job_url,
+        location=location,
+        source=source,
         created_at=now,
         updated_at=now,
     )
@@ -318,6 +330,22 @@ def soft_delete_chat(db: Session, chat: JobChat) -> JobChat:
     and a hard delete would cascade it away.
     """
     chat.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    return chat
+
+
+def save_keyword_match(
+    db: Session,
+    chat: JobChat,
+    result: dict,
+) -> JobChat:
+    """Store the latest ATS keyword match on a chat, replacing any previous one.
+
+    There is only ever one live result per chat: a re-run answers the same
+    question with fresher inputs, and keeping the stale answer next to it would
+    only ever be read by mistake.
+    """
+    chat.keyword_match = result
     db.commit()
     return chat
 

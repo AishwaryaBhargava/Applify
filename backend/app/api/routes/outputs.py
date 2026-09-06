@@ -1,4 +1,5 @@
-"""Output routes: generate a tailored resume, cover letter, or answer.
+"""Output routes: generate a tailored resume, cover letter, or answer -- and
+download one as a file.
 
 ``POST /chats/{id}/outputs`` is the explicit-button path. The same three
 documents are reachable by simply asking for them in chat -- the intent router
@@ -18,7 +19,7 @@ the SSE frames, the persistence, the tracker flip -- is the message route's own
 import uuid
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 
 from app.api.routes.chats import require_chat
@@ -27,11 +28,17 @@ from app.api.routes.messages import (
     assistant_event_stream,
     open_token_stream,
 )
-from app.api.schemas.outputs import OutputRequest, OutputResponse
+from app.api.schemas.outputs import ExportFormat, OutputRequest, OutputResponse
 from app.data.deps import CurrentUser, DbSession
-from app.services import chat_service, output_service
+from app.services import chat_service, export_service, output_service
 
 router = APIRouter(prefix="/chats", tags=["outputs"])
+
+OUTPUT_NOT_FOUND = "Output not found"
+
+# Markdown is served as text so a browser shows it rather than guessing; the
+# ``attachment`` disposition is what makes it a download either way.
+MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"
 
 # The user turn each button stands for. Written into the thread so a document
 # never appears as an assistant message answering nothing.
@@ -107,3 +114,61 @@ def list_outputs(
         OutputResponse.model_validate(output)
         for output in output_service.list_outputs(db, chat.id)
     ]
+
+
+@router.get("/{chat_id}/outputs/{output_id}/export")
+def export_output(
+    chat_id: uuid.UUID,
+    output_id: uuid.UUID,
+    user_id: CurrentUser,
+    db: DbSession,
+    export_format: ExportFormat = Query(
+        default=ExportFormat.DOCX,
+        alias="format",
+        description="docx for a Word file, md for the raw Markdown.",
+    ),
+) -> Response:
+    """Download one generated document as a file.
+
+    The output is looked up *within* the caller's chat, so an output id lifted
+    from someone else's chat resolves to nothing and returns the same 404 a
+    made-up id would. Ownership is never a 403 here for the same reason it is
+    not anywhere else: a 403 confirms the document exists.
+
+    The filename is ``<company>-<kind>.<ext>``, slugified -- enough to tell
+    twenty downloads apart weeks later, when the tab that produced them is long
+    closed.
+
+    Raises:
+        HTTPException: 404 when the chat is not the caller's, or the output does
+            not belong to that chat. An unknown ``format`` is a 422.
+    """
+    chat = require_chat(db, chat_id, user_id)
+
+    output = output_service.get_output(db, chat.id, output_id)
+    if output is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, OUTPUT_NOT_FOUND)
+
+    label = output.output_type.replace("_", " ")
+    filename = export_service.export_filename(
+        chat.company or chat.title, output.output_type, export_format.value
+    )
+
+    if export_format is ExportFormat.MD:
+        body = (output.content or "").encode("utf-8")
+        media_type = MARKDOWN_MEDIA_TYPE
+    else:
+        body = export_service.markdown_to_docx(
+            output.content or "",
+            title="{} - {}".format(chat.company or chat.title, label),
+        )
+        media_type = export_service.DOCX_MEDIA_TYPE
+
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": 'attachment; filename="{}"'.format(filename),
+            "Content-Length": str(len(body)),
+        },
+    )

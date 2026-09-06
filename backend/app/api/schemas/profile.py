@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # --------------------------------------------------------------------------
 # Sections
@@ -31,6 +31,7 @@ PROFILE_SECTIONS: tuple[str, ...] = (
     "certifications",
     "projects",
     "achievements",
+    "publications",
 )
 
 # A skill should be a short token ("PostgreSQL"), not a sentence. Anything
@@ -53,6 +54,13 @@ class WorkExperience(BaseModel):
     end_date: str | None = None
     current: bool = False
     highlights: list[str] = Field(default_factory=list)
+    # "Full-time", "Internship", "Contract", "Freelance". Left free-form on
+    # purpose: an enum would reject the half-dozen spellings people actually
+    # use, and nothing downstream branches on the value.
+    employment_type: str | None = None
+    # Recognition tied to this specific role, kept apart from `highlights` so a
+    # generated resume can lead with an award rather than bury it in bullets.
+    awards: list[str] = Field(default_factory=list)
 
 
 class Education(BaseModel):
@@ -66,6 +74,11 @@ class Education(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     details: str | None = None
+    # As written: "8.7/10", "3.8 GPA", "First Class". Never parsed to a number
+    # -- grading scales differ by country and a float would lose the scale.
+    gpa: str | None = None
+    coursework: list[str] = Field(default_factory=list)
+    honors: list[str] = Field(default_factory=list)
 
 
 class Certification(BaseModel):
@@ -76,6 +89,28 @@ class Certification(BaseModel):
     name: str | None = None
     issuer: str | None = None
     year: str | None = None
+    expires: str | None = None
+    credential_url: str | None = None
+    description: str | None = None
+
+
+class ProjectLinks(BaseModel):
+    """The places one project can be found.
+
+    Three named slots rather than a list, because a generated resume renders
+    them differently: source, a running deployment, and a walkthrough are not
+    interchangeable.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    github: str | None = None
+    live: str | None = None
+    demo: str | None = None
+
+    def first(self) -> str | None:
+        """Return the first link that is set, in github/live/demo order."""
+        return self.github or self.live or self.demo
 
 
 class Project(BaseModel):
@@ -86,7 +121,31 @@ class Project(BaseModel):
     name: str | None = None
     description: str | None = None
     technologies: list[str] = Field(default_factory=list)
+    # Kept alongside `links` for backward compatibility: every profile stored
+    # before this field existed carries a single `link`, and every consumer
+    # still reads it. When it is absent it is filled from `links` rather than
+    # left empty, so an old reader never loses a URL a new writer supplied.
     link: str | None = None
+    links: ProjectLinks = Field(default_factory=ProjectLinks)
+    start_date: str | None = None
+    end_date: str | None = None
+    # Key contributions and impact, the project equivalent of a role's bullets.
+    highlights: list[str] = Field(default_factory=list)
+
+
+class Publication(BaseModel):
+    """A paper, article, patent, or preprint the user authored."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    title: str | None = None
+    # One free-text string ("Rivera, J., Okafor, N.") rather than a list: author
+    # order matters and citation styles differ, so splitting would lose both.
+    authors: str | None = None
+    url: str | None = None
+    # "Published", "Under review", "Accepted", "Preprint".
+    status: str | None = None
+    year: str | None = None
 
 
 class ParsedProfile(BaseModel):
@@ -101,6 +160,7 @@ class ParsedProfile(BaseModel):
     certifications: list[Certification] = Field(default_factory=list)
     projects: list[Project] = Field(default_factory=list)
     achievements: list[str] = Field(default_factory=list)
+    publications: list[Publication] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------
@@ -167,6 +227,8 @@ def _coerce_work_experience(items: Any) -> list[WorkExperience]:
             end_date=_clean_str(item.get("end_date")),
             current=_clean_bool(item.get("current")),
             highlights=_clean_str_list(item.get("highlights")),
+            employment_type=_clean_str(item.get("employment_type")),
+            awards=_clean_str_list(item.get("awards")),
         )
         # An entry naming neither the role nor the employer carries nothing
         # usable downstream.
@@ -188,6 +250,9 @@ def _coerce_education(items: Any) -> list[Education]:
             start_date=_clean_str(item.get("start_date")),
             end_date=_clean_str(item.get("end_date")),
             details=_clean_str(item.get("details")),
+            gpa=_clean_str(item.get("gpa")),
+            coursework=_clean_str_list(item.get("coursework")),
+            honors=_clean_str_list(item.get("honors")),
         )
         if entry.degree or entry.institution:
             out.append(entry)
@@ -209,10 +274,26 @@ def _coerce_certifications(items: Any) -> list[Certification]:
             name=_clean_str(item.get("name")),
             issuer=_clean_str(item.get("issuer")),
             year=_clean_str(item.get("year")),
+            expires=_clean_str(item.get("expires")),
+            credential_url=_clean_str(item.get("credential_url")),
+            description=_clean_str(item.get("description")),
         )
         if entry.name:
             out.append(entry)
     return out
+
+
+def _coerce_project_links(value: Any) -> ProjectLinks:
+    """Build a project's link set, tolerating a bare string or a missing key."""
+    if isinstance(value, str):
+        return ProjectLinks(github=_clean_str(value))
+    if not isinstance(value, dict):
+        return ProjectLinks()
+    return ProjectLinks(
+        github=_clean_str(value.get("github")),
+        live=_clean_str(value.get("live")),
+        demo=_clean_str(value.get("demo")),
+    )
 
 
 def _coerce_projects(items: Any) -> list[Project]:
@@ -226,13 +307,43 @@ def _coerce_projects(items: Any) -> list[Project]:
             continue
         if not isinstance(item, dict):
             continue
+        links = _coerce_project_links(item.get("links"))
         entry = Project(
             name=_clean_str(item.get("name")),
             description=_clean_str(item.get("description")),
             technologies=_clean_str_list(item.get("technologies"), MAX_SKILL_CHARS),
-            link=_clean_str(item.get("link")),
+            # An old profile has only `link`; a new one may have only `links`.
+            # Filling the legacy field keeps both readers working.
+            link=_clean_str(item.get("link")) or links.first(),
+            links=links,
+            start_date=_clean_str(item.get("start_date")),
+            end_date=_clean_str(item.get("end_date")),
+            highlights=_clean_str_list(item.get("highlights")),
         )
         if entry.name or entry.description:
+            out.append(entry)
+    return out
+
+
+def _coerce_publications(items: Any) -> list[Publication]:
+    """Build publications; a bare string is read as the title."""
+    out: list[Publication] = []
+    for item in items if isinstance(items, list) else []:
+        if isinstance(item, str):
+            title = _clean_str(item)
+            if title:
+                out.append(Publication(title=title))
+            continue
+        if not isinstance(item, dict):
+            continue
+        entry = Publication(
+            title=_clean_str(item.get("title")),
+            authors=_clean_str(item.get("authors")),
+            url=_clean_str(item.get("url")),
+            status=_clean_str(item.get("status")),
+            year=_clean_str(item.get("year")),
+        )
+        if entry.title:
             out.append(entry)
     return out
 
@@ -261,6 +372,7 @@ def coerce_parsed_profile(raw: Any) -> ParsedProfile:
         certifications=_coerce_certifications(raw.get("certifications")),
         projects=_coerce_projects(raw.get("projects")),
         achievements=_clean_str_list(raw.get("achievements")),
+        publications=_coerce_publications(raw.get("publications")),
     )
 
 
@@ -293,6 +405,15 @@ MAX_DETAIL_CHARS = 2000
 # Dates stay free-form ("Jan 2022"), so this only catches pasted prose.
 MAX_DATE_CHARS = 100
 MAX_LINK_CHARS = 500
+# Short labels kept as free text: employment type, GPA, publication status.
+MAX_LABEL_CHARS = 100
+# A paper title is routinely longer than a job title and shorter than an
+# abstract, so it gets its own ceiling rather than borrowing either.
+MAX_TITLE_CHARS = 500
+MAX_AUTHORS_CHARS = 1000
+# A course name or an honour, not a paragraph about one.
+MAX_COURSEWORK_ITEMS = 50
+MAX_AWARDS = 20
 # A role with more than this many bullets is a resume section, not a role, and
 # every generated output would be dominated by it.
 MAX_HIGHLIGHTS = 20
@@ -456,6 +577,10 @@ def _is_blank_entry(item: dict[str, Any]) -> bool:
         if isinstance(value, list):
             if _clean_str_list(value):
                 return False
+        elif isinstance(value, dict):
+            # A project whose only content is a github URL is not a blank row.
+            if not _is_blank_entry(value):
+                return False
         elif _clean_str(value) is not None:
             return False
     return True
@@ -496,6 +621,15 @@ def _validate_work_experience(
                 errors, item.get("highlights"), section=section, index=index,
                 field="highlights", label="highlight",
                 max_chars=MAX_HIGHLIGHT_CHARS, max_items=MAX_HIGHLIGHTS,
+            ),
+            employment_type=_strict_str(
+                errors, item, "employment_type", section=section, index=index,
+                label="Employment type", max_chars=MAX_LABEL_CHARS,
+            ),
+            awards=_strict_str_list(
+                errors, item.get("awards"), section=section, index=index,
+                field="awards", label="award",
+                max_chars=MAX_HIGHLIGHT_CHARS, max_items=MAX_AWARDS,
             ),
         )
         out.append(entry.model_dump())
@@ -545,6 +679,20 @@ def _validate_education(
                 errors, item, "details", section=section, index=index,
                 label="Details", max_chars=MAX_DETAIL_CHARS,
             ),
+            gpa=_strict_str(
+                errors, item, "gpa", section=section, index=index,
+                label="GPA", max_chars=MAX_LABEL_CHARS,
+            ),
+            coursework=_strict_str_list(
+                errors, item.get("coursework"), section=section, index=index,
+                field="coursework", label="course", max_chars=MAX_NAME_CHARS,
+                max_items=MAX_COURSEWORK_ITEMS,
+            ),
+            honors=_strict_str_list(
+                errors, item.get("honors"), section=section, index=index,
+                field="honors", label="honour", max_chars=MAX_NAME_CHARS,
+                max_items=MAX_COURSEWORK_ITEMS,
+            ),
         )
         out.append(entry.model_dump())
     return out
@@ -572,9 +720,45 @@ def _validate_certifications(
                 errors, item, "year", section=section, index=index,
                 label="Year", max_chars=MAX_DATE_CHARS,
             ),
+            expires=_strict_str(
+                errors, item, "expires", section=section, index=index,
+                label="Expiry", max_chars=MAX_DATE_CHARS,
+            ),
+            credential_url=_strict_str(
+                errors, item, "credential_url", section=section, index=index,
+                label="Credential URL", max_chars=MAX_LINK_CHARS,
+            ),
+            description=_strict_str(
+                errors, item, "description", section=section, index=index,
+                label="Description", max_chars=MAX_DETAIL_CHARS,
+            ),
         )
         out.append(entry.model_dump())
     return out
+
+
+def _validate_project_links(
+    value: Any,
+    errors: list[dict[str, Any]],
+    *,
+    section: str,
+    index: int,
+) -> ProjectLinks:
+    """Clean one project's link set, recording an over-long URL as an error."""
+    item = value if isinstance(value, dict) else {}
+    return ProjectLinks(
+        **{
+            key: _strict_str(
+                errors, item, key, section=section, index=index,
+                label=label, max_chars=MAX_LINK_CHARS,
+            )
+            for key, label in (
+                ("github", "GitHub link"),
+                ("live", "Live link"),
+                ("demo", "Demo link"),
+            )
+        }
+    )
 
 
 def _validate_projects(
@@ -586,6 +770,9 @@ def _validate_projects(
     for index, item in enumerate(items if isinstance(items, list) else []):
         if not isinstance(item, dict) or _is_blank_entry(item):
             continue
+        links = _validate_project_links(
+            item.get("links"), errors, section=section, index=index
+        )
         entry = Project(
             name=_strict_str(
                 errors, item, "name", section=section, index=index,
@@ -602,6 +789,56 @@ def _validate_projects(
             link=_strict_str(
                 errors, item, "link", section=section, index=index,
                 label="Link", max_chars=MAX_LINK_CHARS,
+            )
+            or links.first(),
+            links=links,
+            start_date=_strict_str(
+                errors, item, "start_date", section=section, index=index,
+                label="Start date", max_chars=MAX_DATE_CHARS,
+            ),
+            end_date=_strict_str(
+                errors, item, "end_date", section=section, index=index,
+                label="End date", max_chars=MAX_DATE_CHARS,
+            ),
+            highlights=_strict_str_list(
+                errors, item.get("highlights"), section=section, index=index,
+                field="highlights", label="highlight",
+                max_chars=MAX_HIGHLIGHT_CHARS, max_items=MAX_HIGHLIGHTS,
+            ),
+        )
+        out.append(entry.model_dump())
+    return out
+
+
+def _validate_publications(
+    items: Any, errors: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Require a title on every publication the user actually filled in."""
+    section = "publications"
+    out: list[dict[str, Any]] = []
+    for index, item in enumerate(items if isinstance(items, list) else []):
+        if not isinstance(item, dict) or _is_blank_entry(item):
+            continue
+        entry = Publication(
+            title=_strict_str(
+                errors, item, "title", section=section, index=index,
+                label="Publication title", max_chars=MAX_TITLE_CHARS, required=True,
+            ),
+            authors=_strict_str(
+                errors, item, "authors", section=section, index=index,
+                label="Authors", max_chars=MAX_AUTHORS_CHARS,
+            ),
+            url=_strict_str(
+                errors, item, "url", section=section, index=index,
+                label="Link", max_chars=MAX_LINK_CHARS,
+            ),
+            status=_strict_str(
+                errors, item, "status", section=section, index=index,
+                label="Status", max_chars=MAX_LABEL_CHARS,
+            ),
+            year=_strict_str(
+                errors, item, "year", section=section, index=index,
+                label="Year", max_chars=MAX_DATE_CHARS,
             ),
         )
         out.append(entry.model_dump())
@@ -657,6 +894,10 @@ def validate_section_updates(updates: dict[str, Any]) -> dict[str, Any]:
         )
     if "projects" in cleaned:
         cleaned["projects"] = _validate_projects(cleaned["projects"], errors)
+    if "publications" in cleaned:
+        cleaned["publications"] = _validate_publications(
+            cleaned["publications"], errors
+        )
     if "skills" in cleaned:
         cleaned["skills"] = _strict_str_list(
             errors, cleaned["skills"], section="skills", index=None,
@@ -722,6 +963,7 @@ class ProfileUpdateRequest(BaseModel):
     certifications: list[Certification] | None = None
     projects: list[Project] | None = None
     achievements: list[str] | None = None
+    publications: list[Publication] | None = None
 
     raw_text: str | None = None
     parsed_json: ParsedProfile | None = None
@@ -767,3 +1009,120 @@ class ProfileGapsResponse(BaseModel):
     """The gap-detection result for the current user's profile."""
 
     gaps: list[ProfileGap] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# Supplementary file import
+# --------------------------------------------------------------------------
+
+
+class ImportSheet(BaseModel):
+    """One sheet, table, or document section that was read.
+
+    A skipped sheet still appears, with ``skipped_reason`` set: a user who
+    uploaded a workbook with a references tab should be told it was left out
+    rather than left to wonder why nothing from it turned up.
+    """
+
+    name: str
+    rows: int = 0
+    cols: int = 0
+    skipped_reason: str | None = None
+
+
+class ImportSource(BaseModel):
+    """What the proposal was read from. Nothing about the file is stored."""
+
+    filename: str | None = None
+    # "xlsx", "csv", "docx", "pdf", "txt", "md", or "json".
+    kind: str
+    sheets: list[ImportSheet] = Field(default_factory=list)
+
+
+class ProfileChange(BaseModel):
+    """One entry-level difference between the stored profile and the proposal."""
+
+    section: str
+    # "added", "updated", "unchanged", or "removed".
+    kind: str
+    # Human-readable, e.g. "Senior Backend Engineer at Kestrel Labs".
+    label: str
+    # The normalised identity the diff matched on. Stable across a re-import,
+    # so a client can keep a per-entry decision through a refresh.
+    key: str
+    # Position in the *proposal's* section list, or null for a removed entry.
+    index: int | None = None
+    # Field names that differ. Only meaningful for "updated".
+    fields: list[str] = Field(default_factory=list)
+
+
+class ImportChangeCounts(BaseModel):
+    """How many entries fall into each change kind."""
+
+    added: int = 0
+    updated: int = 0
+    unchanged: int = 0
+    removed: int = 0
+
+
+class ImportSummary(ImportChangeCounts):
+    """Totals across the whole proposal, plus a per-section breakdown."""
+
+    sections: dict[str, ImportChangeCounts] = Field(default_factory=dict)
+
+
+class ProfileImportResponse(BaseModel):
+    """The result of ``POST /profile/import``. Nothing has been saved."""
+
+    proposal: ParsedProfile
+    changes: list[ProfileChange] = Field(default_factory=list)
+    summary: ImportSummary = Field(default_factory=ImportSummary)
+    source: ImportSource
+    # The extracted text exactly as it was fed to the merge model, so the
+    # client can echo it back to /profile/import/apply. The server stores
+    # nothing between the two calls, so this is the only place it exists.
+    # Capped at the same 200k as raw_text, keeping the head.
+    document_text: str = ""
+    # "azure" or "groq" -- which model produced the merge.
+    provider: str | None = None
+
+
+class ProfileImportApplyRequest(BaseModel):
+    """The subset of a reviewed proposal the user chose to keep.
+
+    ``parsed_json`` is the whole proposal as returned by ``/profile/import``,
+    optionally edited by hand, and ``sections`` names which of its sections to
+    write. Anything not named is left exactly as it is stored.
+
+    ``filename`` and ``document_text`` are echoed back by the client because the
+    server keeps nothing between the two calls -- no upload is stored, no
+    proposal is cached. When ``document_text`` is present it is appended to the
+    profile's ``raw_text`` under a dated header.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    parsed_json: ParsedProfile
+    sections: list[str] = Field(default_factory=list)
+    filename: str | None = None
+    document_text: str | None = None
+
+    @field_validator("sections")
+    @classmethod
+    def _known_sections(cls, value: list[str]) -> list[str]:
+        """Reject a section name the profile does not have.
+
+        A typo would otherwise be silently ignored and the user would be told
+        their import applied when nothing was written.
+        """
+        unknown = [name for name in value if name not in PROFILE_SECTIONS]
+        if unknown:
+            raise ValueError(
+                "Unknown profile section(s): {}".format(", ".join(sorted(unknown)))
+            )
+        return value
+
+    def selected_updates(self) -> dict[str, Any]:
+        """Return ``{section: proposed value}`` for the chosen sections only."""
+        proposal = self.parsed_json.model_dump()
+        return {section: proposal[section] for section in self.sections}

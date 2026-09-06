@@ -9,11 +9,17 @@ means the frontend never has to fan out to /tracker just to draw the list.
 
 import uuid
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.schemas.analysis import AnalysisResponse
 from app.api.schemas.messages import MessageResponse
+from app.api.schemas.tracker import (
+    MAX_SHORT_TEXT_CHARS,
+    MAX_URL_CHARS,
+    validate_job_url,
+)
 
 
 class ChatCreateRequest(BaseModel):
@@ -27,6 +33,19 @@ class ChatCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     company: str | None = Field(default=None, max_length=255)
     jd_text: str | None = None
+    # Three facts about the *application* rather than the conversation. They are
+    # accepted here because this is the one moment the user has the posting in
+    # front of them; the route writes them onto the chat's tracker entry, and
+    # they come back from ``GET /tracker``, not from ``ChatResponse``.
+    job_url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
+    location: str | None = Field(default=None, max_length=MAX_SHORT_TEXT_CHARS)
+    source: str | None = Field(default=None, max_length=MAX_SHORT_TEXT_CHARS)
+
+    @field_validator("job_url")
+    @classmethod
+    def _check_url(cls, value: str | None) -> str | None:
+        """Reject anything that is not an http(s) URL, as the tracker does."""
+        return validate_job_url(value)
 
 
 class ChatUpdateRequest(BaseModel):
@@ -60,3 +79,8 @@ class ChatDetailResponse(ChatResponse):
 
     messages: list[MessageResponse] = Field(default_factory=list)
     analysis: AnalysisResponse | None = None
+    # The last ATS keyword match run for this chat, in the shape
+    # ``POST /chats/{id}/keywords`` returns. Null until it has been run once.
+    # Carried here so reopening a chat redraws the match without a second
+    # request -- and without re-running the model.
+    keyword_match: dict[str, Any] | None = None

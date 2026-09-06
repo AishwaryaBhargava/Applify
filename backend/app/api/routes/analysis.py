@@ -13,17 +13,18 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.schemas.analysis import AnalysisRequest, AnalysisResponse
-from app.api.routes.chats import require_chat
+
+# NO_PROFILE and NO_JD are defined in routes.chats -- the module every
+# chat-scoped route already imports -- and re-exported here because they are
+# part of this route's contract too.
+from app.api.routes.chats import NO_JD, NO_PROFILE, require_chat, require_profile
 from app.data.deps import CurrentUser, DbSession
-from app.services import analysis_service, profile_service
+from app.services import analysis_service
 from app.services.analysis_service import AnalysisError
 
 router = APIRouter(prefix="/chats", tags=["analysis"])
 
-# The frontend turns this exact body into its "upload a resume" prompt.
-NO_PROFILE = "Upload your resume first"
-
-NO_JD = "This chat has no job description to analyse."
+__all__ = ["NO_JD", "NO_PROFILE", "analyze_chat", "router"]
 
 
 @router.post("/{chat_id}/analyze", response_model=AnalysisResponse)
@@ -56,9 +57,7 @@ def analyze_chat(
         # user a different score for the same profile and the same JD.
         return AnalysisResponse.model_validate(existing)
 
-    profile = profile_service.get_profile(db, user_id)
-    if profile is None or not profile.parsed_json:
-        raise HTTPException(status.HTTP_409_CONFLICT, NO_PROFILE)
+    profile = require_profile(db, user_id)
 
     if not (chat.jd_text or "").strip():
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, NO_JD)

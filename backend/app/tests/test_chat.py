@@ -66,6 +66,7 @@ def make_chat(
     created_at: datetime = NOW,
     deleted_at: datetime | None = None,
     analysis_type: str | None = None,
+    keyword_match: dict | None = None,
 ) -> JobChat:
     """Build a JobChat row the way the database would hand one back."""
     return JobChat(
@@ -77,6 +78,7 @@ def make_chat(
         analysis_type=analysis_type,
         created_at=created_at,
         deleted_at=deleted_at,
+        keyword_match=keyword_match,
     )
 
 
@@ -103,9 +105,15 @@ def make_tracker(
     user_id: str = TEST_USER_ID,
     resume_type: str = "unaltered",
     status: str = "not_applied",
+    **fields,
 ) -> TrackerEntry:
-    """Build a TrackerEntry row."""
-    return TrackerEntry(
+    """Build a TrackerEntry row.
+
+    ``fields`` covers the optional application facts -- job_url, location,
+    salary, source, applied_at, next_action, next_action_date, notes, priority
+    -- so a test that cares about one of them names only that one.
+    """
+    row = TrackerEntry(
         id=uuid.uuid4(),
         chat_id=chat_id,
         user_id=uuid.UUID(user_id),
@@ -114,6 +122,9 @@ def make_tracker(
         created_at=NOW,
         updated_at=NOW,
     )
+    for name, value in fields.items():
+        setattr(row, name, value)
+    return row
 
 
 def make_profile(user_id: str = TEST_USER_ID) -> Profile:

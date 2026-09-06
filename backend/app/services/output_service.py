@@ -482,3 +482,42 @@ def list_outputs(db: Session, chat_id: uuid.UUID) -> list[GeneratedOutput]:
         .order_by(GeneratedOutput.created_at.desc())
         .all()
     )
+
+
+def get_output(
+    db: Session,
+    chat_id: uuid.UUID,
+    output_id: uuid.UUID,
+) -> GeneratedOutput | None:
+    """Return one generated output, but only if it belongs to this chat.
+
+    The chat id is part of the lookup rather than checked afterwards, so an
+    output id borrowed from another user's chat simply does not resolve. The
+    caller turns a None into the same 404 it would give for a missing id.
+    """
+    return (
+        db.query(GeneratedOutput)
+        .filter(
+            GeneratedOutput.id == output_id,
+            GeneratedOutput.chat_id == chat_id,
+        )
+        .first()
+    )
+
+
+def latest_resume(db: Session, chat_id: uuid.UUID) -> GeneratedOutput | None:
+    """Return the most recent generated resume for a chat, if there is one.
+
+    The keyword matcher checks the profile *and* the document that would
+    actually be sent; this is the second corpus. Newest wins, because an earlier
+    draft is not what the user would submit.
+    """
+    return (
+        db.query(GeneratedOutput)
+        .filter(
+            GeneratedOutput.chat_id == chat_id,
+            GeneratedOutput.output_type == OUTPUT_RESUME,
+        )
+        .order_by(GeneratedOutput.created_at.desc())
+        .first()
+    )

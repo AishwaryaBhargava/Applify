@@ -10,14 +10,24 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.schemas.profile import (
+    ImportSource,
     ProfileGapsResponse,
+    ProfileImportApplyRequest,
+    ProfileImportResponse,
     ProfileResponse,
     ProfileUpdateRequest,
     validate_section_updates,
 )
 from app.data.deps import CurrentUser, DbSession
 from app.models.profile import Profile
-from app.services import profile_service, resume_parser
+from app.services import import_service, profile_service, resume_parser
+from app.services.import_service import (
+    DocumentReadError,
+    DocumentTooLarge,
+    EmptyDocumentText,
+    ImportProposalError,
+    UnsupportedDocumentFormat,
+)
 from app.services.resume_parser import (
     EmptyResumeText,
     ProfileExtractionError,
@@ -138,6 +148,127 @@ def update_profile(
         validate_section_updates(payload.section_updates()),
         raw_text=payload.raw_text,
     )
+    return ProfileResponse.model_validate(updated)
+
+
+@router.post("/import", response_model=ProfileImportResponse)
+async def import_document(
+    user_id: CurrentUser,
+    db: DbSession,
+    file: UploadFile = File(...),
+) -> ProfileImportResponse:
+    """Propose what the profile would look like with a document folded in.
+
+    **Nothing is saved.** The response is a proposal plus a per-entry diff for
+    the user to review; ``POST /profile/import/apply`` is what writes. A user
+    with no profile yet gets a proposal in which everything is an addition.
+
+    The file is read in memory and discarded, exactly like a resume upload --
+    no upload is stored and no proposal is cached, which is why
+    ``/profile/import/apply`` takes the reviewed proposal back in its body.
+
+    Raises:
+        HTTPException: 400 for an unsupported or unreadable file, 413 over
+            10MB, 422 when the file holds no importable text, and 502 when the
+            merge model is unreachable.
+    """
+    file_bytes = await file.read()
+
+    if not file_bytes:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "The uploaded file is empty."
+        )
+    if len(file_bytes) > import_service.MAX_IMPORT_BYTES:
+        raise HTTPException(
+            status.HTTP_413_CONTENT_TOO_LARGE, "The file must be 10MB or smaller."
+        )
+
+    try:
+        document = import_service.extract_document_text(
+            file_bytes, filename=file.filename, content_type=file.content_type
+        )
+    except DocumentTooLarge as exc:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(exc)) from exc
+    except UnsupportedDocumentFormat as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except DocumentReadError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except EmptyDocumentText as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+
+    profile = profile_service.get_profile(db, user_id)
+    try:
+        result = import_service.propose_import(
+            profile.parsed_json if profile is not None else None,
+            document["text"],
+            file.filename or "document",
+        )
+    except ImportProposalError as exc:
+        # The file was fine; the model was not.
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+
+    return ProfileImportResponse(
+        proposal=result["proposal"],
+        changes=result["changes"],
+        summary=result["summary"],
+        source=ImportSource(
+            filename=file.filename,
+            kind=document["structure"]["kind"],
+            sheets=document["structure"]["sheets"],
+        ),
+        # Echoed back on apply, where it is appended to raw_text. Nothing about
+        # the upload is kept server-side between the two calls, so the client
+        # holds it in the meantime.
+        document_text=document["text"][: import_service.MAX_RAW_TEXT_CHARS],
+        provider=result.get("provider") or None,
+    )
+
+
+@router.post("/import/apply", response_model=ProfileResponse)
+def apply_import(
+    payload: ProfileImportApplyRequest,
+    user_id: CurrentUser,
+    db: DbSession,
+) -> ProfileResponse:
+    """Write the sections of a reviewed import proposal the user chose to keep.
+
+    Each named section replaces that section wholesale; sections the user did
+    not tick are untouched. The submitted values go through the **same strict
+    validation** as a manual edit -- an import is still a user's decision to
+    write something, and a row that vanished on save with a 200 would be data
+    loss whether a model or a keyboard produced it. A 422 writes nothing.
+
+    When ``document_text`` is sent it is appended to the profile's ``raw_text``
+    under a dated header, so a later re-extraction can see the imported source.
+    A user who has no profile row yet gets one created here.
+
+    Raises:
+        ProfileValidationError: 422, with a per-field ``errors`` list, when a
+            proposed entry is missing a required field.
+    """
+    profile = profile_service.get_profile(db, user_id)
+    updates = validate_section_updates(payload.selected_updates())
+
+    raw_text: str | None = None
+    if payload.document_text:
+        raw_text = import_service.append_import_to_raw_text(
+            profile.raw_text if profile is not None else None,
+            payload.document_text,
+            payload.filename,
+        )
+
+    if profile is None:
+        # An import can be the first thing a user does. Creating the row here
+        # keeps that path from needing a resume upload first.
+        profile = profile_service.upsert_profile(
+            db,
+            user_id,
+            raw_text=raw_text,
+            parsed_json=profile_service.merge_profile_updates(None, updates),
+        )
+        return ProfileResponse.model_validate(profile)
+
+    updated = profile_service.merge_profile(db, profile, updates, raw_text=raw_text)
     return ProfileResponse.model_validate(updated)
 
 

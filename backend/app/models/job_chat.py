@@ -2,9 +2,10 @@
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, String, Text, func, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.data.database import Base
@@ -34,4 +35,14 @@ class JobChat(Base):
     # Soft delete: DELETE /chats/{id} stamps this instead of removing the row.
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # The last ATS keyword match run for this chat: the extracted JD keywords
+    # and how the user's profile scored against them. Null until
+    # ``POST /chats/{id}/keywords`` has been run once.
+    #
+    # Stored on the chat rather than in its own table because there is exactly
+    # one live result per chat -- a re-run replaces it, and nobody queries a
+    # keyword across chats.
+    keyword_match: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
     )

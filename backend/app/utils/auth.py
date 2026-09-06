@@ -151,3 +151,32 @@ def get_user_id(claims: dict[str, Any]) -> str:
     if not user_id:
         raise AuthError("Token has no subject claim")
     return str(user_id)
+
+
+def get_user_email(claims: dict[str, Any]) -> str:
+    """Return the lower-cased email address on a set of verified claims.
+
+    Supabase puts it at the top level as ``email``; a token minted through some
+    providers carries it only inside ``user_metadata``, so both are read. An
+    anonymous or service token has neither, and gets ``""`` -- the allowlist
+    check in :mod:`app.data.deps` treats that as "not on the list", which is the
+    safe direction.
+    """
+    email = claims.get("email")
+    if not email:
+        metadata = claims.get("user_metadata")
+        if isinstance(metadata, dict):
+            email = metadata.get("email")
+    return str(email).strip().lower() if email else ""
+
+
+def is_allowed_email(email: str, allowlist: frozenset[str] | set[str]) -> bool:
+    """Return True when this instance will serve the owner of ``email``.
+
+    An empty allowlist means the instance is open, which is the default and the
+    only behaviour that existed before private instances. Otherwise the address
+    must appear on the list, compared case-insensitively.
+    """
+    if not allowlist:
+        return True
+    return email.strip().lower() in allowlist

@@ -257,3 +257,140 @@ def test_auth_verify_returns_user_id(client: TestClient, hs256_secret: str) -> N
     response = client.post("/auth/verify", headers={"Authorization": "Bearer " + token})
     assert response.status_code == 200
     assert response.json() == {"user_id": USER_ID}
+
+
+# --- the private-instance allowlist ----------------------------------------
+
+# ALLOWED_USER_EMAILS turns a shared Supabase project into a personal
+# deployment: the token is genuine, the signature verifies, and the user is
+# still refused. That is a 403 rather than a 401 on purpose -- re-authenticating
+# cannot help, and a 401 would send the frontend round a login loop.
+
+
+@pytest.fixture
+def allowlist(monkeypatch: pytest.MonkeyPatch):
+    """Set ALLOWED_USER_EMAILS for one test."""
+
+    def apply(raw: str) -> None:
+        monkeypatch.setattr(settings, "allowed_user_emails_raw", raw)
+
+    apply("")
+    return apply
+
+
+def _token(secret: str, **overrides: object) -> str:
+    """Sign an HS256 token with the given extra claims."""
+    return jwt.encode(_claims(**overrides), secret, algorithm="HS256")
+
+
+def test_open_instance_accepts_any_verified_email(
+    client: TestClient, hs256_secret: str, db: FakeSession, allowlist
+) -> None:
+    """An empty allowlist is the default and lets everyone through."""
+    allowlist("")
+    app.dependency_overrides[get_db] = lambda: db
+    try:
+        response = client.get(
+            "/profile",
+            headers={
+                "Authorization": "Bearer "
+                + _token(hs256_secret, email="anyone@example.com")
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    # 404 rather than 200: the request reached the route, which found no
+    # profile. Getting that far is the assertion.
+    assert response.status_code == 404
+
+
+def test_private_instance_accepts_a_listed_email(
+    client: TestClient, hs256_secret: str, db: FakeSession, allowlist
+) -> None:
+    """A listed address is served exactly as before, case-insensitively."""
+    allowlist("Owner@Example.com, teammate@example.com")
+    app.dependency_overrides[get_db] = lambda: db
+    try:
+        response = client.get(
+            "/profile",
+            headers={
+                "Authorization": "Bearer "
+                + _token(hs256_secret, email="OWNER@example.com")
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+
+
+def test_private_instance_rejects_an_unlisted_email(
+    client: TestClient, hs256_secret: str, allowlist
+) -> None:
+    """A valid token from someone else is a 403 that says why."""
+    allowlist("owner@example.com")
+
+    response = client.get(
+        "/profile",
+        headers={
+            "Authorization": "Bearer "
+            + _token(hs256_secret, email="stranger@example.com")
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "This Applify instance is private."}
+
+
+def test_private_instance_rejects_a_token_with_no_email(
+    client: TestClient, hs256_secret: str, allowlist
+) -> None:
+    """No email claim means not on the list -- the safe direction."""
+    allowlist("owner@example.com")
+
+    response = client.get(
+        "/profile", headers={"Authorization": "Bearer " + _token(hs256_secret)}
+    )
+
+    assert response.status_code == 403
+
+
+def test_private_instance_reads_the_email_from_user_metadata(
+    client: TestClient, hs256_secret: str, db: FakeSession, allowlist
+) -> None:
+    """Some providers put the address only in user_metadata."""
+    allowlist("owner@example.com")
+    app.dependency_overrides[get_db] = lambda: db
+    try:
+        response = client.get(
+            "/profile",
+            headers={
+                "Authorization": "Bearer "
+                + _token(hs256_secret, user_metadata={"email": "owner@example.com"})
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+
+
+def test_an_invalid_token_is_still_a_401_on_a_private_instance(
+    client: TestClient, hs256_secret: str, allowlist
+) -> None:
+    """The allowlist is checked after verification, never instead of it."""
+    allowlist("owner@example.com")
+
+    response = client.get("/profile", headers={"Authorization": "Bearer nonsense"})
+
+    assert response.status_code == 401
+
+
+def test_allowed_user_emails_parses_and_folds_case() -> None:
+    """Entries are trimmed, lower-cased, and de-duplicated."""
+    from app.core.config import Settings
+
+    parsed = Settings(ALLOWED_USER_EMAILS=" A@b.com , a@B.com ,, c@d.com ")
+    assert parsed.allowed_user_emails == frozenset({"a@b.com", "c@d.com"})
+    assert Settings(ALLOWED_USER_EMAILS="").allowed_user_emails == frozenset()

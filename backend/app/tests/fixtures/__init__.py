@@ -1,4 +1,4 @@
-"""Test fixtures: a fictional resume plus in-memory PDF and DOCX builders.
+"""Test fixtures: a fictional resume and workbook, with in-memory builders.
 
 Nothing here touches the network or the disk. The PDF is assembled by hand
 rather than with a rendering library so the test suite needs no extra
@@ -11,6 +11,7 @@ The resume is entirely fictional. No real person's details appear in this repo.
 import io
 
 from docx import Document
+from openpyxl import Workbook
 
 # --------------------------------------------------------------------------
 # A realistic, fictional resume
@@ -198,4 +199,105 @@ def make_docx(text: str, table_rows: list[list[str]] | None = None) -> bytes:
 
     buffer = io.BytesIO()
     document.save(buffer)
+    return buffer.getvalue()
+
+
+# --------------------------------------------------------------------------
+# Supplementary import fixtures
+# --------------------------------------------------------------------------
+
+# A career workbook of the shape people actually keep: one sheet per section,
+# a header row, and a tab of referees that must never be imported. Entirely
+# fictional, and deliberately different from SAMPLE_RESUME_TEXT above so a
+# merge test can tell what came from where.
+SAMPLE_WORKBOOK: dict[str, list[list[str]]] = {
+    "Education": [
+        ["Degree", "Institution", "Field", "Start", "End", "GPA", "Coursework"],
+        [
+            "Master of Technology",
+            "Indian Institute of Technology, Hyderabad",
+            "Computer Science",
+            "2017",
+            "2019",
+            "8.7/10",
+            "Distributed Systems, Compilers",
+        ],
+        [
+            "Certificate in Product Analytics",
+            "Fernwood Open University",
+            "Analytics",
+            "2024",
+            "2024",
+            "",
+            "Experiment design",
+        ],
+    ],
+    "Work Experiences": [
+        ["Role", "Company", "Type", "Start", "End", "Highlights"],
+        [
+            "Senior Backend Engineer",
+            "Kestrel Payments",
+            "Full-time",
+            "March 2022",
+            "Present",
+            "Owned the settlement ledger migration\nMentored four engineers",
+        ],
+        [
+            "Backend Engineering Intern",
+            "Aldermill Systems",
+            "Internship",
+            "May 2018",
+            "July 2018",
+            "Built an internal metrics dashboard",
+        ],
+    ],
+    "Publications": [
+        ["Title", "Authors", "Status", "Year", "URL"],
+        [
+            "Reconciling at Scale",
+            "Rivera, J.",
+            "Published",
+            "2023",
+            "https://example.com/reconciling",
+        ],
+    ],
+    "LORs": [
+        ["Name", "Designation", "Email", "Phone"],
+        [
+            "Dr Ana Beltrame",
+            "Professor",
+            "ana.beltrame@example.edu",
+            "+91 90000 11111",
+        ],
+    ],
+}
+
+
+def make_xlsx(sheets: dict[str, list[list[object]]]) -> bytes:
+    """Build an in-memory XLSX workbook from ``{sheet name: rows}``.
+
+    Built here rather than committed as a binary fixture so the test that reads
+    it can also read what it is supposed to contain.
+
+    Args:
+        sheets: Sheet name to rows; each row is a list of cell values. Insertion
+            order is the workbook's sheet order.
+
+    Returns:
+        The XLSX file's bytes.
+    """
+    workbook = Workbook()
+    # A new workbook always has one sheet; the first named sheet takes it over
+    # rather than leaving an empty "Sheet" behind.
+    default = workbook.active
+    for index, (name, rows) in enumerate(sheets.items()):
+        worksheet = default if index == 0 else workbook.create_sheet()
+        worksheet.title = name
+        for row in rows:
+            worksheet.append(list(row))
+    if not sheets:
+        default.title = "Sheet1"
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
     return buffer.getvalue()

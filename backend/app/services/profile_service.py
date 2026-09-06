@@ -136,7 +136,7 @@ def merge_profile_updates(
     definition -- there is no stable identity for "the second job" -- so the
     editor sends a whole section back and this replaces it.
 
-    The result always carries all seven sections, so callers never have to guard
+    The result always carries every section, so callers never have to guard
     against a missing key.
 
     Args:
@@ -328,4 +328,188 @@ def detect_gaps(parsed_json: dict[str, Any] | None) -> list[dict[str, str]]:
             )
         )
 
+    # --- publications ---
+    # Deliberately not checked. Most people outside research have none, and a
+    # nudge that can only ever be dismissed is noise on every other profile.
+
     return gaps
+
+
+# --------------------------------------------------------------------------
+# Plain-text rendering
+# --------------------------------------------------------------------------
+
+
+def _labelled(label: str, value: str | None) -> str | None:
+    """Return ``"Label: value"`` when the value is set, otherwise None."""
+    value = (value or "").strip()
+    return "{}: {}".format(label, value) if value else None
+
+
+def _date_range(start: str | None, end: str | None, current: bool = False) -> str:
+    """Render a free-form date range the way the resume wrote it."""
+    start = (start or "").strip()
+    end = (end or "").strip() or ("Present" if current else "")
+    if start and end:
+        return "{} - {}".format(start, end)
+    return start or end
+
+
+def _bullets(items: list[str], indent: str = "  ") -> list[str]:
+    """Render a list of strings as indented dashes."""
+    return ["{}- {}".format(indent, item.strip()) for item in items if item.strip()]
+
+
+def render_profile_text(parsed_json: dict[str, Any] | None) -> str:
+    """Render a stored profile as full plain text, every section included.
+
+    This is the *complete* rendering: nothing is capped, elided, or summarised,
+    and every field the schema carries appears when it has a value. It is what
+    a caller wants when the model must not miss a role because a summary
+    truncated the list -- an import merge, an export, a prompt that can afford
+    the tokens.
+
+    ``utils.context_builder`` keeps its own, deliberately compact, summary for
+    the chat system message, where the budget is tight. The two are not
+    interchangeable and neither should be rewritten in terms of the other.
+
+    Args:
+        parsed_json: The stored profile sections, or None.
+
+    Returns:
+        A plain-text document. Empty sections are omitted entirely, so an empty
+        profile renders as ``""`` rather than a page of headings.
+    """
+    profile = ParsedProfile.model_validate(parsed_json or {})
+    blocks: list[str] = []
+
+    if (profile.summary or "").strip():
+        blocks.append("SUMMARY\n{}".format(profile.summary.strip()))
+
+    if profile.work_experience:
+        lines = ["WORK EXPERIENCE"]
+        for role in profile.work_experience:
+            header = " at ".join(
+                part for part in (role.title, role.company) if (part or "").strip()
+            )
+            lines.append(header or "Untitled role")
+            meta = [
+                _date_range(role.start_date, role.end_date, role.current),
+                (role.location or "").strip(),
+                (role.employment_type or "").strip(),
+            ]
+            meta_line = " | ".join(part for part in meta if part)
+            if meta_line:
+                lines.append("  {}".format(meta_line))
+            lines.extend(_bullets(role.highlights))
+            if role.awards:
+                lines.append("  Awards:")
+                lines.extend(_bullets(role.awards, indent="    "))
+        blocks.append("\n".join(lines))
+
+    if profile.education:
+        lines = ["EDUCATION"]
+        for entry in profile.education:
+            qualification = ", ".join(
+                part for part in (entry.degree, entry.field) if (part or "").strip()
+            )
+            lines.append(
+                " -- ".join(
+                    part
+                    for part in (qualification, (entry.institution or "").strip())
+                    if part
+                )
+                or "Untitled qualification"
+            )
+            meta = [
+                _date_range(entry.start_date, entry.end_date),
+                _labelled("GPA", entry.gpa),
+            ]
+            meta_line = " | ".join(part for part in meta if part)
+            if meta_line:
+                lines.append("  {}".format(meta_line))
+            if (entry.details or "").strip():
+                lines.append("  {}".format(entry.details.strip()))
+            if entry.coursework:
+                lines.append("  Coursework: {}".format(", ".join(entry.coursework)))
+            if entry.honors:
+                lines.append("  Honours: {}".format(", ".join(entry.honors)))
+        blocks.append("\n".join(lines))
+
+    if profile.skills:
+        blocks.append("SKILLS\n{}".format(", ".join(profile.skills)))
+
+    if profile.certifications:
+        lines = ["CERTIFICATIONS"]
+        for cert in profile.certifications:
+            lines.append((cert.name or "Untitled certification").strip())
+            meta = [
+                (cert.issuer or "").strip(),
+                _labelled("Issued", cert.year),
+                _labelled("Expires", cert.expires),
+                (cert.credential_url or "").strip(),
+            ]
+            meta_line = " | ".join(part for part in meta if part)
+            if meta_line:
+                lines.append("  {}".format(meta_line))
+            if (cert.description or "").strip():
+                lines.append("  {}".format(cert.description.strip()))
+        blocks.append("\n".join(lines))
+
+    if profile.projects:
+        lines = ["PROJECTS"]
+        for project in profile.projects:
+            lines.append((project.name or "Untitled project").strip())
+            dates = _date_range(project.start_date, project.end_date)
+            if dates:
+                lines.append("  {}".format(dates))
+            if (project.description or "").strip():
+                lines.append("  {}".format(project.description.strip()))
+            if project.technologies:
+                lines.append(
+                    "  Technologies: {}".format(", ".join(project.technologies))
+                )
+            lines.extend(_bullets(project.highlights))
+            urls = [
+                _labelled(label, value)
+                for label, value in (
+                    ("GitHub", project.links.github),
+                    ("Live", project.links.live),
+                    ("Demo", project.links.demo),
+                )
+            ]
+            # `link` is the legacy single URL. Only shown when it is not
+            # already one of the three named links, so nothing repeats.
+            legacy = (project.link or "").strip()
+            if legacy and legacy not in {
+                (project.links.github or "").strip(),
+                (project.links.live or "").strip(),
+                (project.links.demo or "").strip(),
+            }:
+                urls.append(_labelled("Link", legacy))
+            url_line = " | ".join(part for part in urls if part)
+            if url_line:
+                lines.append("  {}".format(url_line))
+        blocks.append("\n".join(lines))
+
+    if profile.achievements:
+        blocks.append(
+            "ACHIEVEMENTS\n{}".format("\n".join(_bullets(profile.achievements, "")))
+        )
+
+    if profile.publications:
+        lines = ["PUBLICATIONS"]
+        for publication in profile.publications:
+            lines.append((publication.title or "Untitled publication").strip())
+            meta = [
+                (publication.authors or "").strip(),
+                (publication.status or "").strip(),
+                (publication.year or "").strip(),
+                (publication.url or "").strip(),
+            ]
+            meta_line = " | ".join(part for part in meta if part)
+            if meta_line:
+                lines.append("  {}".format(meta_line))
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks)
