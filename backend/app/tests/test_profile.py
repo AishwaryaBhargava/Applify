@@ -7,6 +7,7 @@ database is the ``FakeSession`` from ``conftest``. The one exception is
 """
 
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -22,8 +23,10 @@ from app.api.schemas.profile import (
     format_profile_errors,
     validate_section_updates,
 )
+from app.core.config import settings
+from app.core.errors import RESUME_EXTRACTION_FAILED
 from app.models.profile import Profile
-from app.services import profile_service, resume_parser
+from app.services import llm, profile_service, resume_parser
 from app.services.resume_parser import (
     EmptyResumeText,
     ProfileExtractionError,
@@ -321,6 +324,69 @@ def test_extract_profile_wraps_transport_failure(monkeypatch: pytest.MonkeyPatch
         resume_parser.extract_profile("some text")
 
 
+def test_extraction_retries_on_the_other_provider_when_truncated(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A response cut off at the ceiling is a 200, so only ``finish_reason`` shows it.
+
+    Repairing the half-object would silently drop whatever came after the cut,
+    and the user would never know a role was missing. Asking the other provider
+    once costs a few seconds and usually returns the whole thing.
+    """
+    monkeypatch.setattr(settings, "groq_api_key", "test-groq-key")
+    monkeypatch.setattr(settings, "azure_openai_endpoint", "https://test.openai.azure.com/")
+    monkeypatch.setattr(settings, "azure_openai_api_key", "test-azure-key")
+
+    truncated = json.dumps(SAMPLE_EXTRACTION)[: len(json.dumps(SAMPLE_EXTRACTION)) // 2]
+    called: list[str] = []
+
+    def groq(messages, **kwargs):
+        called.append("groq")
+        return llm.CompletionText(truncated, "length", kwargs["max_tokens"])
+
+    def azure(messages, **kwargs):
+        called.append("azure")
+        return llm.CompletionText(json.dumps(SAMPLE_EXTRACTION), "stop", 900)
+
+    monkeypatch.setattr(llm, "_complete_groq_json", groq)
+    monkeypatch.setattr(llm, "_complete_azure_json", azure)
+
+    with caplog.at_level(logging.WARNING, logger="app.services.resume_parser"):
+        profile = resume_parser.extract_profile(SAMPLE_RESUME_TEXT)
+
+    assert called == ["groq", "azure"]
+    # The whole answer, not the repaired half: the second role survived.
+    assert len(profile.work_experience) == len(SAMPLE_EXTRACTION["work_experience"])
+    assert profile.skills == SAMPLE_EXTRACTION["skills"]
+    assert "truncated at 16000 tokens by groq; retrying on azure" in caplog.text
+
+
+def test_a_truncated_retry_that_also_fails_keeps_the_first_answer(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Half a profile beats a 502: the retry is an improvement, not a gate."""
+    monkeypatch.setattr(settings, "groq_api_key", "test-groq-key")
+    monkeypatch.setattr(settings, "azure_openai_endpoint", "https://test.openai.azure.com/")
+    monkeypatch.setattr(settings, "azure_openai_api_key", "test-azure-key")
+
+    body = json.dumps(SAMPLE_EXTRACTION)
+
+    monkeypatch.setattr(
+        llm,
+        "_complete_groq_json",
+        lambda messages, **kwargs: llm.CompletionText(body, "length", 16000),
+    )
+
+    def azure(messages, **kwargs):
+        raise RuntimeError("azure is down too")
+
+    monkeypatch.setattr(llm, "_complete_azure_json", azure)
+
+    profile = resume_parser.extract_profile(SAMPLE_RESUME_TEXT)
+
+    assert profile.skills == SAMPLE_EXTRACTION["skills"]
+
+
 def test_coerce_parsed_profile_never_raises() -> None:
     """Coercion tolerates anything the model might emit."""
     assert coerce_parsed_profile(None) == ParsedProfile()
@@ -482,6 +548,50 @@ def test_upload_maps_extraction_failure_to_502(
     )
 
     assert response.status_code == 502
+    assert response.json()["detail"] == RESUME_EXTRACTION_FAILED
+
+
+def test_upload_502_says_what_to_do_instead_of_quoting_the_provider(
+    auth_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The provider's error is a diagnostic; the detail is a message to a person.
+
+    A real upload once answered with the whole of Groq's
+    ``json_validate_failed`` body -- status code, vendor error code, and
+    ``'failed_generation': 'max completion tokens reached...'`` -- rendered
+    straight into a toast. It named nothing the user could act on. The raw text
+    belongs in the log, where the request id can find it.
+    """
+    provider_error = (
+        "Error code: 400 - {'error': {'message': 'Failed to generate JSON.', "
+        "'code': 'json_validate_failed', 'failed_generation': 'max completion "
+        "tokens reached before generating a valid document'}}"
+    )
+
+    def boom(resume_text: str) -> str:
+        raise RuntimeError(provider_error)
+
+    monkeypatch.setattr(resume_parser, "_call_groq_extraction", boom)
+
+    with caplog.at_level(logging.ERROR, logger="app.api.routes.profile"):
+        response = auth_client.post(
+            "/profile/upload",
+            files={
+                "file": ("resume.pdf", make_pdf(SAMPLE_RESUME_TEXT), PDF_CONTENT_TYPE)
+            },
+        )
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert detail == RESUME_EXTRACTION_FAILED
+    assert "Error code" not in detail
+    assert "json_validate_failed" not in detail
+    assert "failed_generation" not in detail
+    # ...and none of it is lost: it is in the log, on a record that carries the
+    # request id like every other.
+    assert "json_validate_failed" in caplog.text
 
 
 # ==========================================================================
@@ -1402,6 +1512,52 @@ def test_get_gaps_returns_404_when_absent(auth_client: TestClient) -> None:
 # ==========================================================================
 # Opt-in live model test
 # ==========================================================================
+
+
+@pytest.mark.skipif(
+    os.getenv("RUN_LIVE") != "1",
+    reason="Live Groq test. Set RUN_LIVE=1 to run it.",
+)
+def test_live_extraction_accepts_the_larger_token_ceiling() -> None:
+    """Confirm Groq serves the raised ceiling, and report how much of it was used.
+
+    The bug this guards is invisible offline: 4096 tokens was a legal request
+    that simply ran out mid-JSON, and the only way to know 16000 is both
+    accepted by the API and enough for a full extraction is to ask. Run with
+    ``-s`` to see the finish reason and the token count.
+    """
+    content, meta = llm.complete_json_with_meta(
+        [
+            {"role": "system", "content": resume_parser.EXTRACTION_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": resume_parser.EXTRACTION_USER_TEMPLATE.format(
+                    resume_text=SAMPLE_RESUME_TEXT
+                ),
+            },
+        ],
+        max_tokens=resume_parser.EXTRACTION_MAX_TOKENS,
+        temperature=resume_parser.EXTRACTION_TEMPERATURE,
+        prefer=llm.GROQ,
+        purpose="resume extraction",
+    )
+
+    print(
+        "\nlive extraction: provider={} max_tokens={} finish_reason={} "
+        "completion_tokens={}".format(
+            meta["provider"],
+            resume_parser.EXTRACTION_MAX_TOKENS,
+            meta["finish_reason"],
+            meta["completion_tokens"],
+        )
+    )
+
+    # Groq accepted the ceiling rather than rejecting the request for it...
+    assert meta["provider"] == llm.GROQ
+    # ...and the answer ended because the model was finished, not because it ran
+    # out of room, which is the whole point of raising it.
+    assert meta["finish_reason"] == "stop"
+    assert json.loads(resume_parser.strip_code_fences(str(content)))
 
 
 @pytest.mark.skipif(

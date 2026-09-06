@@ -9,9 +9,16 @@ Both take a preferred provider, try it through
 ``utils.retry.retry_with_backoff``, and on a failure that is clearly the
 provider's fault rather than ours -- a rate limit, a 5xx, a dropped connection
 -- fall back **once** to the other provider with the same prompt, temperature,
-and token budget. A 400/401/403/404/422 means our request is wrong; retrying it
+and token budget. A 401/403/404/422 means our request is wrong; retrying it
 elsewhere would only produce the same error twice, so those propagate
 immediately.
+
+A 400 is the one status that has to be read rather than counted. Most 400s are
+a malformed request and propagate like the rest, but two are not ours to fix:
+Groq's ``json_validate_failed`` (the model ran out of budget mid-JSON) and a
+context-length refusal. Both describe *this model* failing on a request the
+other provider may well serve, so both fall back -- see
+:func:`is_fallback_eligible`.
 
 Two rate limits are not the same thing:
 
@@ -58,6 +65,32 @@ DAILY_CAP_MARKERS: tuple[str, ...] = ("per day", "tpd", "per-day", "daily")
 # the other provider would fail identically, so these never trigger a fallback
 # and are never retried.
 CLIENT_ERROR_STATUSES = frozenset({400, 401, 403, 404, 405, 409, 413, 422})
+
+# Two kinds of 400 are *not* "our request is wrong", and both are worth trying
+# on the other provider.
+#
+# The first is a constrained-decoding failure. Groq answers a JSON-mode request
+# it could not complete with ``400 ... 'code': 'json_validate_failed'`` and a
+# ``failed_generation`` field holding whatever the model managed -- for a long
+# extraction, usually the literal string "max completion tokens reached before
+# generating a valid document". The request was accepted and understood; the
+# *model* is what failed, and a different model is exactly the thing that might
+# not. Matched on the body markers rather than the status alone, because a
+# genuinely malformed request is also a 400 and must still fail fast.
+GENERATION_FAILURE_MARKERS: tuple[str, ...] = (
+    "json_validate_failed",
+    "failed_generation",
+)
+
+# The second is a prompt that does not fit. The providers' context windows are
+# not identical, so the request that overflowed one can still be served by the
+# other; refusing to try guarantees the failure.
+CONTEXT_LENGTH_MARKERS: tuple[str, ...] = (
+    "context_length_exceeded",
+    "context length",
+    "maximum context",
+    "reduce the length of the messages",
+)
 
 # Exception class names that mean the provider is unreachable or overloaded,
 # matched by name so this module does not import the openai and groq SDKs.
@@ -239,6 +272,12 @@ def is_quota_or_availability_error(exc: BaseException) -> bool:
     all mean "this provider cannot serve this right now", which is exactly the
     case the other provider can. A 4xx that is not 429 means the request itself
     is malformed or unauthorised and would fail identically anywhere.
+
+    Availability only: the two 400s that are worth a fallback for a different
+    reason are :func:`is_generation_failure` and
+    :func:`is_context_length_error`, and :func:`is_fallback_eligible` is what
+    combines all three. This function stays narrow because
+    :func:`is_daily_cap` builds on it.
     """
     status = _status_code(exc)
     if status is not None:
@@ -247,6 +286,63 @@ def is_quota_or_availability_error(exc: BaseException) -> bool:
         if status in CLIENT_ERROR_STATUSES or 400 <= status < 500:
             return False
     return type(exc).__name__ in AVAILABILITY_EXCEPTION_NAMES
+
+
+def is_generation_failure(exc: BaseException) -> bool:
+    """Return True when a 400 means the model failed, not the request.
+
+    Groq rejects its own unfinished JSON with a 400 carrying
+    ``json_validate_failed`` and a ``failed_generation`` body. Classifying that
+    as "our request is wrong" is what used to turn a long resume into a 502:
+    the request was fine, and the other provider can very often complete the
+    same JSON.
+    """
+    status = _status_code(exc)
+    if status is not None and status != 400:
+        return False
+    text = _error_text(exc)
+    return any(marker in text for marker in GENERATION_FAILURE_MARKERS)
+
+
+def is_context_length_error(exc: BaseException) -> bool:
+    """Return True when a request was refused for being too long for the model.
+
+    The two providers' windows differ, so the prompt one refused is worth
+    offering to the other before giving up.
+    """
+    status = _status_code(exc)
+    if status is not None and status not in (400, 413):
+        return False
+    text = _error_text(exc)
+    return any(marker in text for marker in CONTEXT_LENGTH_MARKERS)
+
+
+def is_fallback_eligible(exc: BaseException) -> bool:
+    """Return True when the *other* provider is worth trying for this failure.
+
+    Three disjoint reasons, in the order they are checked:
+
+    * the provider cannot serve the request right now (429, 5xx, connection);
+    * the model could not produce valid JSON (Groq's ``json_validate_failed``);
+    * the prompt did not fit this provider's context window.
+
+    Everything else -- a bad parameter, a wrong key, an unknown model -- is our
+    request being wrong, and would fail identically anywhere.
+    """
+    return (
+        is_quota_or_availability_error(exc)
+        or is_generation_failure(exc)
+        or is_context_length_error(exc)
+    )
+
+
+def _fallback_reason(exc: BaseException) -> str:
+    """Name the cause of a fallback, for the warning line that records it."""
+    if is_generation_failure(exc):
+        return "invalid_json"
+    if is_context_length_error(exc):
+        return "context_length"
+    return "unavailable"
 
 
 def _other(provider: str) -> str:
@@ -274,7 +370,7 @@ def _fallback_allowed(exc: BaseException, fallback: str, purpose: str) -> bool:
     """Decide whether ``exc`` justifies retrying the call on ``fallback``."""
     if not settings.llm_fallback_enabled:
         return False
-    if not is_quota_or_availability_error(exc):
+    if not is_fallback_eligible(exc):
         return False
     if not is_configured(fallback):
         logger.warning(
@@ -459,11 +555,36 @@ def _attempt(
         raise skipped.original from None
 
 
-def _log_fallback(primary: str, fallback: str, purpose: str) -> None:
-    """Emit the single warning line that records a provider swap."""
-    logger.warning(
-        "%s rate-limited, falling back to %s for %s", primary, fallback, purpose
-    )
+def _log_fallback(
+    primary: str, fallback: str, purpose: str, exc: BaseException | None = None
+) -> None:
+    """Emit the single warning line that records a provider swap.
+
+    The wording names the cause, because the three causes want different
+    follow-ups: a rate limit is capacity, a JSON failure usually means the token
+    ceiling for that call is too low, and a context-length refusal means the
+    prompt itself has grown.
+    """
+    reason = _fallback_reason(exc) if exc is not None else "unavailable"
+    if reason == "invalid_json":
+        logger.warning(
+            "%s could not produce valid JSON, falling back to %s for %s",
+            primary,
+            fallback,
+            purpose,
+        )
+    elif reason == "context_length":
+        logger.warning(
+            "%s could not fit this request in its context window, falling back "
+            "to %s for %s",
+            primary,
+            fallback,
+            purpose,
+        )
+    else:
+        logger.warning(
+            "%s rate-limited, falling back to %s for %s", primary, fallback, purpose
+        )
 
 
 # --------------------------------------------------------------------------
@@ -547,7 +668,7 @@ def _complete_with_fallback(
     except Exception as exc:
         if not _fallback_allowed(exc, fallback, purpose):
             raise
-        _log_fallback(primary, fallback, purpose)
+        _log_fallback(primary, fallback, purpose, exc)
 
     return run(fallback), fallback
 
@@ -658,7 +779,7 @@ def stream_text(
             # model reads as a self-contradiction, so the error stands.
             if started or not _fallback_allowed(exc, fallback, purpose):
                 raise
-            _log_fallback(primary, fallback, purpose)
+            _log_fallback(primary, fallback, purpose, exc)
 
         yield from serve(fallback)
         handle.provider = handle.provider or fallback

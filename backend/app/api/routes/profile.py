@@ -6,6 +6,8 @@ Every route here is thin on purpose. Parsing lives in
 and those services.
 """
 
+import logging
+
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
@@ -18,6 +20,7 @@ from app.api.schemas.profile import (
     ProfileUpdateRequest,
     validate_section_updates,
 )
+from app.core.errors import IMPORT_EXTRACTION_FAILED, RESUME_EXTRACTION_FAILED
 from app.data.deps import CurrentUser, DbSession
 from app.models.profile import Profile
 from app.services import import_service, profile_service, resume_parser
@@ -35,6 +38,8 @@ from app.services.resume_parser import (
     ResumeTextExtractionError,
     UnsupportedResumeFormat,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 
@@ -97,8 +102,13 @@ async def upload_resume(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     except ProfileExtractionError as exc:
         # The file was fine; the model was not. A 502 tells the user to retry
-        # rather than blame their resume.
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        # rather than blame their resume, and the provider's own text -- a
+        # status code and a vendor error code -- is logged rather than shown:
+        # every log line carries the request id, so the two can be matched up.
+        logger.error("resume extraction failed for a valid upload: %s", exc)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, RESUME_EXTRACTION_FAILED
+        ) from exc
 
     profile = profile_service.upsert_profile(
         db,
@@ -209,8 +219,12 @@ async def import_document(
         # larger than a single answer can hold, and only the user can fix that.
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     except ImportProposalError as exc:
-        # The file was fine; the model was not.
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        # The file was fine; the model was not. As with the upload above, the
+        # user gets a sentence and the log gets the provider's error.
+        logger.error("profile import failed for a valid upload: %s", exc)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, IMPORT_EXTRACTION_FAILED
+        ) from exc
 
     return ProfileImportResponse(
         proposal=result["proposal"],

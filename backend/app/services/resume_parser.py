@@ -45,7 +45,20 @@ SUPPORTED_EXTENSIONS = {
 # gpt-oss models spend a chunk of their budget reasoning before emitting the
 # answer. Extraction returns a whole profile, so the ceiling has to be generous
 # or the JSON comes back truncated.
-EXTRACTION_MAX_TOKENS = 4096
+#
+# 4096 was enough for the original schema and stopped being enough once
+# coursework, honors, project highlights and links, and publications were added:
+# a dense two-page resume spends most of 4096 on reasoning and then runs out
+# mid-object, which Groq reports as a 400 ``json_validate_failed`` rather than
+# as a truncated answer.
+#
+# 16000 is the largest ceiling that is legal on *both* providers, which is the
+# constraint that picks the number: the same budget is handed to the Azure
+# fallback verbatim, and GPT-4o refuses anything over 16384 output tokens.
+# Groq's openai/gpt-oss-120b allows far more (its 65536-token completion limit
+# sits inside a 131072-token context), so this is well within what Groq accepts
+# and is bounded by Azure.
+EXTRACTION_MAX_TOKENS = 16000
 
 # Deterministic extraction: the same resume should parse the same way twice.
 EXTRACTION_TEMPERATURE = 0.1
@@ -505,17 +518,27 @@ def _call_groq_extraction(resume_text: str) -> str:
     one-shot action the user is watching a spinner for, so a Groq daily cap must
     produce a parsed profile from the other provider rather than a 502.
 
+    One failure ``services.llm`` cannot see is a completion that ended at the
+    token ceiling. That is not an error -- the provider returns a 200 with
+    ``finish_reason == "length"`` and a JSON object missing its last few closing
+    braces -- so it is handled here: the same prompt is asked once more of the
+    *other* provider, whose different reasoning budget usually leaves room for
+    the whole object. Only once. If the second answer is truncated too, the
+    longer of the two goes to :func:`parse_json_response`, whose repair path
+    salvages what it can rather than losing the upload entirely.
+
     Returns:
         The model's response, carrying ``.provider`` (see ``services.llm``).
     """
-    return llm.complete_json(
-        [
-            {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": EXTRACTION_USER_TEMPLATE.format(resume_text=resume_text),
-            },
-        ],
+    messages = [
+        {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": EXTRACTION_USER_TEMPLATE.format(resume_text=resume_text),
+        },
+    ]
+    content, meta = llm.complete_json_with_meta(
+        messages,
         max_tokens=EXTRACTION_MAX_TOKENS,
         temperature=EXTRACTION_TEMPERATURE,
         prefer=llm.GROQ,
@@ -523,6 +546,44 @@ def _call_groq_extraction(resume_text: str) -> str:
         max_attempts=4,
         base_delay=1.0,
     )
+    if meta.get("finish_reason") != "length":
+        return content
+
+    served_by = meta.get("provider") or llm.GROQ
+    fallback = llm.AZURE if served_by != llm.AZURE else llm.GROQ
+    logger.warning(
+        "resume extraction was truncated at %s tokens by %s; retrying on %s",
+        meta.get("completion_tokens"),
+        served_by,
+        fallback,
+    )
+    if not llm.is_configured(fallback):
+        logger.warning(
+            "cannot retry the truncated extraction on %s: it has no credentials "
+            "configured",
+            fallback,
+        )
+        return content
+
+    try:
+        retried, retry_meta = llm.complete_json_with_meta(
+            messages,
+            max_tokens=EXTRACTION_MAX_TOKENS,
+            temperature=EXTRACTION_TEMPERATURE,
+            prefer=fallback,
+            purpose="resume extraction (truncated retry)",
+            max_attempts=2,
+            base_delay=1.0,
+        )
+    except Exception:
+        # The first answer is truncated, not worthless. Losing it here would
+        # turn a partial profile into a 502.
+        logger.exception("the truncated-extraction retry on %s failed too", fallback)
+        return content
+
+    if retry_meta.get("finish_reason") == "length" and len(retried) < len(content):
+        return content
+    return retried
 
 
 def extract_profile(raw_text: str) -> ParsedProfile:

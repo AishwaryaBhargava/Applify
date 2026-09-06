@@ -47,6 +47,33 @@ PER_MINUTE_MESSAGE = (
     "Please try again in 4.2s.', 'type': 'tokens'}}"
 )
 
+# What Groq returns when the model ran out of budget part way through the JSON
+# it was asked for. Copied from a real resume upload: a 400, and not a word in
+# it about our request being wrong.
+JSON_VALIDATE_FAILED_MESSAGE = (
+    "Error code: 400 - {'error': {'message': 'Failed to generate JSON. Please "
+    "adjust your prompt. See 'failed_generation' for more details.', 'type': "
+    "'invalid_request_error', 'code': 'json_validate_failed', "
+    "'failed_generation': 'max completion tokens reached before generating a "
+    "valid document'}}"
+)
+
+# A prompt too long for this model. Also a 400, also worth asking the other
+# provider, whose window is a different size.
+CONTEXT_LENGTH_MESSAGE = (
+    "Error code: 400 - {'error': {'message': \"This model's maximum context "
+    "length is 131072 tokens. However, your messages resulted in 140233 "
+    "tokens.\", 'type': 'invalid_request_error', 'code': "
+    "'context_length_exceeded'}}"
+)
+
+# A 400 that really is ours: the parameter is wrong, and it would be just as
+# wrong at the other provider.
+BAD_PARAMETER_MESSAGE = (
+    "Error code: 400 - {'error': {'message': '1.9 is greater than the maximum "
+    "of 1 - 'temperature'', 'type': 'invalid_request_error'}}"
+)
+
 
 # ==========================================================================
 # Doubles
@@ -72,6 +99,14 @@ class AuthenticationError(Exception):
     def __init__(self, message: str = "Invalid API key") -> None:
         super().__init__(message)
         self.status_code = 401
+
+
+class BadRequestError(Exception):
+    """A 400. What kind of 400 is only readable from the body."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.status_code = 400
 
 
 class APIConnectionError(Exception):
@@ -190,6 +225,35 @@ def test_a_connection_error_is_a_fallback_reason() -> None:
     assert llm.is_quota_or_availability_error(APIConnectionError("dropped")) is True
 
 
+def test_json_validate_failed_is_the_model_failing_not_the_request() -> None:
+    """The status says 400; the body says the model ran out of room."""
+    exc = BadRequestError(JSON_VALIDATE_FAILED_MESSAGE)
+
+    assert llm.is_generation_failure(exc) is True
+    assert llm.is_fallback_eligible(exc) is True
+    # Still not an availability problem: that classification stays narrow so
+    # the daily-cap rule that builds on it keeps meaning what it says.
+    assert llm.is_quota_or_availability_error(exc) is False
+    assert llm.is_rate_limit_error(exc) is False
+
+
+def test_context_length_exceeded_is_worth_the_other_window() -> None:
+    """One provider's window being too small says nothing about the other's."""
+    exc = BadRequestError(CONTEXT_LENGTH_MESSAGE)
+
+    assert llm.is_context_length_error(exc) is True
+    assert llm.is_fallback_eligible(exc) is True
+
+
+def test_a_plain_400_is_still_ours_to_fix() -> None:
+    """A bad parameter is a bad parameter at both providers."""
+    exc = BadRequestError(BAD_PARAMETER_MESSAGE)
+
+    assert llm.is_generation_failure(exc) is False
+    assert llm.is_context_length_error(exc) is False
+    assert llm.is_fallback_eligible(exc) is False
+
+
 # ==========================================================================
 # complete_json
 # ==========================================================================
@@ -304,6 +368,84 @@ def test_a_401_propagates_without_a_fallback(
         llm.complete_json(MESSAGES, max_tokens=512, temperature=0.2, purpose="chat")
 
     assert sleeps == [], "a 401 is not retryable either"
+
+
+def test_json_validate_failed_falls_back_to_azure(
+    monkeypatch: pytest.MonkeyPatch,
+    sleeps: list[float],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Groq failing to finish its JSON is Azure's cue, not a 502.
+
+    This is the failure a real 46KB resume produced: a 400 that was classified
+    as "our request is wrong" and propagated, when the same prompt would have
+    been answered by the other provider on the first try.
+    """
+    attempts: list = []
+
+    def groq(messages, **kwargs):
+        attempts.append(kwargs)
+        raise BadRequestError(JSON_VALIDATE_FAILED_MESSAGE)
+
+    monkeypatch.setattr(llm, "_complete_groq_json", groq)
+    monkeypatch.setattr(llm, "_complete_azure_json", returns(AZURE_BODY))
+
+    with caplog.at_level(logging.WARNING, logger="app.services.llm"):
+        result = llm.complete_json(
+            MESSAGES, max_tokens=16000, temperature=0.1, purpose="resume extraction"
+        )
+
+    assert result == AZURE_BODY
+    assert llm.provider_of(result) == "azure"
+    assert len(attempts) == 1, "a 400 is not worth retrying on the same provider"
+    assert sleeps == []
+
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1, "one swap, one line"
+    assert (
+        "groq could not produce valid JSON, falling back to azure for "
+        "resume extraction" in warnings[0].getMessage()
+    )
+
+
+def test_context_length_exceeded_falls_back_to_azure(
+    monkeypatch: pytest.MonkeyPatch,
+    sleeps: list[float],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A prompt that overflowed one window is offered to the other."""
+    monkeypatch.setattr(
+        llm, "_complete_groq_json", raises(BadRequestError(CONTEXT_LENGTH_MESSAGE))
+    )
+    monkeypatch.setattr(llm, "_complete_azure_json", returns(AZURE_BODY))
+
+    with caplog.at_level(logging.WARNING, logger="app.services.llm"):
+        result = llm.complete_json(
+            MESSAGES, max_tokens=16000, temperature=0.1, purpose="resume extraction"
+        )
+
+    assert result == AZURE_BODY
+    assert sleeps == []
+    assert "context window, falling back to azure" in caplog.text
+
+
+def test_a_bad_parameter_400_propagates_without_a_fallback(
+    monkeypatch: pytest.MonkeyPatch, sleeps: list[float]
+) -> None:
+    """The 400s that really are our fault must keep failing fast and loudly."""
+    monkeypatch.setattr(
+        llm, "_complete_groq_json", raises(BadRequestError(BAD_PARAMETER_MESSAGE))
+    )
+    monkeypatch.setattr(
+        llm, "_complete_azure_json", raises(AssertionError("azure must not be called"))
+    )
+
+    with pytest.raises(BadRequestError):
+        llm.complete_json(
+            MESSAGES, max_tokens=512, temperature=1.9, purpose="resume extraction"
+        )
+
+    assert sleeps == []
 
 
 def test_fallback_disabled_lets_the_rate_limit_through(

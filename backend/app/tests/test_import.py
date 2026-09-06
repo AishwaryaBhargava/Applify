@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.errors import IMPORT_EXTRACTION_FAILED
 from app.models.profile import Profile
 from app.services import import_service
 from app.services.import_service import (
@@ -1105,7 +1106,10 @@ def test_import_maps_a_provider_failure_to_502(
     db.seed(make_profile())
 
     def boom(*args, **kwargs):
-        raise RuntimeError("provider down")
+        raise RuntimeError(
+            "Error code: 400 - {'error': {'code': 'json_validate_failed', "
+            "'failed_generation': 'max completion tokens reached'}}"
+        )
 
     monkeypatch.setattr(import_service.llm, "complete_json_with_meta", boom)
 
@@ -1115,6 +1119,10 @@ def test_import_maps_a_provider_failure_to_502(
     )
 
     assert response.status_code == 502
+    # A sentence the user can act on, not the provider's error body.
+    detail = response.json()["detail"]
+    assert detail == IMPORT_EXTRACTION_FAILED
+    assert "Error code" not in detail
 
 
 def test_import_returns_the_document_text_for_the_apply_call(

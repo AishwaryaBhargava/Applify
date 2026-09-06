@@ -29,6 +29,11 @@ Validation failures keep their ``422`` but lose FastAPI's nested list of error
 objects in favour of one readable sentence, because the frontend renders
 ``detail`` directly into a toast.
 
+The same rule governs :data:`RESUME_EXTRACTION_FAILED` and
+:data:`IMPORT_EXTRACTION_FAILED`, which the profile routes send instead of a
+provider's exception text: a ``detail`` is read by a person, so it says what
+happened and what to try next, and the raw provider error is logged.
+
 There is one deliberate addition to that shape. A ``ProfileValidationError`` --
 a profile edit that parsed fine but left a required field empty -- answers with
 the same ``detail`` sentence *plus* an ``errors`` list naming the section, the
@@ -57,6 +62,21 @@ RATE_LIMITED = (
     "The AI provider is rate limited right now. Please retry in a moment."
 )
 UNEXPECTED = "Something went wrong"
+
+# What the user is told when a file was fine but the model could not turn it
+# into a profile. The provider's own text -- "Error code: 400 - {'error': ...
+# 'json_validate_failed' ...}" -- is a diagnostic, not a message: it names a
+# vendor, a status code, and an internal failure mode, and none of the three
+# tell the person holding the resume what to do next. It goes to the log with
+# the request id instead, which is where it can actually be acted on.
+RESUME_EXTRACTION_FAILED = (
+    "We could not read a profile from this resume. Please try again, or "
+    "import a spreadsheet instead."
+)
+IMPORT_EXTRACTION_FAILED = (
+    "We could not read a profile update from this file. Please try again, or "
+    "try a smaller file with one section in it."
+)
 
 
 def error_response(status_code: int, detail: str) -> JSONResponse:
