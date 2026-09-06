@@ -20,6 +20,7 @@ import io
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import pdfplumber
@@ -379,11 +380,87 @@ def strip_code_fences(text: str) -> str:
     return "\n".join(lines).strip()
 
 
+def repair_truncated_json(text: str) -> str | None:
+    """Close the structures a response left open when it hit the token ceiling.
+
+    A **last resort**, and only for truncation. The proper fix for a cut-off
+    response is to ask for less of it -- ``import_service`` re-splits its input
+    and retries when ``finish_reason`` is ``"length"`` -- because repairing
+    silently keeps whatever half-entry survived and drops the rest without
+    anyone noticing. This exists for the case where that has already been tried
+    and some data is better than none.
+
+    Walks the text tracking string state, drops any trailing partial token, and
+    closes every open ``[`` and ``{``.
+
+    Args:
+        text: A response that failed to parse.
+
+    Returns:
+        A repaired JSON string, or None when there is nothing to repair (no
+        opening brace, or nothing left after the trailing fragment is dropped).
+    """
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    # The last index at which the document was structurally "at rest": not
+    # inside a string, and just after a complete value. Truncating back to
+    # there throws away the half-written entry and nothing else.
+    safe_end = -1
+
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+                safe_end = index
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char in "{[":
+            stack.append("}" if char == "{" else "]")
+        elif char in "}]":
+            if stack:
+                stack.pop()
+            safe_end = index
+        elif char == ",":
+            # A comma proves the value before it was complete, which is the
+            # only way a bare literal (a number, true/false/null) is ever known
+            # to have finished. The trailing comma itself is stripped below.
+            safe_end = index
+
+    if safe_end < start:
+        return None
+
+    repaired = text[start : safe_end + 1]
+    # The last complete token may have been a *key* whose value never arrived.
+    # What follows it in the original text says which: a colon means it was a
+    # key, and a key with no value has to go, comma and all.
+    if text[safe_end + 1 :].lstrip().startswith(":"):
+        repaired = re.sub(r',?\s*"(?:[^"\\]|\\.)*"\s*$', "", repaired)
+    repaired = re.sub(r",\s*$", "", repaired)
+    if not repaired.strip() or repaired.strip() == "{":
+        # Nothing survived but the opening brace; an empty object is honest.
+        return "{}" if stack else None
+    return repaired + "".join(reversed(stack))
+
+
 def parse_json_response(content: str) -> Any:
     """Parse a model response that is supposed to be a JSON object.
 
     Tries the whole response first, then the outermost ``{...}`` span, which
-    rescues a response with a stray sentence before or after the object.
+    rescues a response with a stray sentence before or after the object, and
+    only then :func:`repair_truncated_json`, which is logged at WARNING because
+    a repaired object is a partial one.
 
     Raises:
         ProfileExtractionError: If no JSON object can be recovered.
@@ -401,6 +478,20 @@ def parse_json_response(content: str) -> Any:
             return json.loads(candidate[start : end + 1])
         except json.JSONDecodeError:
             pass
+
+    repaired = repair_truncated_json(candidate)
+    if repaired is not None:
+        try:
+            parsed = json.loads(repaired)
+        except json.JSONDecodeError:
+            parsed = None
+        if parsed is not None:
+            logger.warning(
+                "recovered a truncated model response by closing %d open "
+                "structure(s); the result is incomplete",
+                len(repaired) - len(repaired.rstrip("}]")),
+            )
+            return parsed
 
     raise ProfileExtractionError(
         "The extraction model did not return valid JSON."

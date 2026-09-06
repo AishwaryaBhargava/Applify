@@ -23,6 +23,7 @@ from app.models.profile import Profile
 from app.services import import_service, profile_service, resume_parser
 from app.services.import_service import (
     DocumentReadError,
+    DocumentTooDense,
     DocumentTooLarge,
     EmptyDocumentText,
     ImportProposalError,
@@ -169,8 +170,8 @@ async def import_document(
 
     Raises:
         HTTPException: 400 for an unsupported or unreadable file, 413 over
-            10MB, 422 when the file holds no importable text, and 502 when the
-            merge model is unreachable.
+            10MB, 422 when the file holds no importable text or is too dense to
+            merge in one go, and 502 when the merge model is unreachable.
     """
     file_bytes = await file.read()
 
@@ -203,6 +204,10 @@ async def import_document(
             document["text"],
             file.filename or "document",
         )
+    except DocumentTooDense as exc:
+        # Not the provider's fault and not a bad file: one section is simply
+        # larger than a single answer can hold, and only the user can fix that.
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     except ImportProposalError as exc:
         # The file was fine; the model was not.
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc

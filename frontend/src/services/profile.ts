@@ -351,7 +351,7 @@ export const IMPORT_MAX_BYTES = 10 * 1024 * 1024
  * a resume parse: the file is extracted, then compared entry by entry against
  * the stored profile. Well over the 40 seconds the slow case takes.
  */
-export const IMPORT_TIMEOUT_MS = 180_000
+export const IMPORT_TIMEOUT_MS = 600_000
 
 /**
  * POST /profile/import — multipart upload that returns a merge *preview*.

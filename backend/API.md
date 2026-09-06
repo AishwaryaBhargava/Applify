@@ -1159,12 +1159,38 @@ Those rows are other people's contact details. A skipped sheet is still reported
 with `skipped_reason`, so the user knows it was read and left out rather than
 missed. A file whose only sheets are reference sheets is a `422`.
 
-The merge itself is one Azure GPT-4o call (`temperature` 0.1, `max_tokens`
-8000), preferring Azure because Groq's daily cap is spent on chat. A document
-over ~60k characters is split **on sheet boundaries** and merged in sequential
-passes, each pass taking the previous one's output as its "existing" profile --
-sequential, not parallel, because pass two has to see what pass one added or a
-role listed on two sheets is added twice.
+#### How the merge runs
+
+Azure GPT-4o (`temperature` 0.1, `max_tokens` 16000), preferring Azure because
+Groq's daily cap is spent on chat. The document is **chunked**, and each pass
+merges **only the sections its chunk touches**:
+
+| | |
+|---|---|
+| Chunk size | At most 20,000 characters **and** at most 6 table rows, split on sheet boundaries first and row boundaries within an oversized sheet. Adjacent small sheets are packed together, so a workbook of eight tiny tabs is not eight passes |
+| Header repeat | A sheet split across chunks re-emits its heading (marked `(continued)`) and its header row on every part -- a table body without its columns is a grid of unlabelled cells |
+| Context | Each pass is shown the existing entries of the sections its chunk plausibly covers, guessed from the sheet headings and header rows, and nothing else. A chunk that matches no heading gets every section |
+| Answer | A partial object: only the sections that chunk actually says something about. Sections it omits are left exactly as they were |
+| Combination | Deterministic. A returned section replaces the running one (it is a merge of it), **except** that any existing entry missing from the replacement is put back, matched on the same key the diff uses. Dropping a stored entry is therefore impossible, not merely forbidden |
+| Order | Sequential. Pass two is shown pass one's output, so a role listed on two sheets is merged rather than added twice |
+
+Both limits earn their place. The whole-profile design this replaced asked for
+the entire merged profile on every pass, so the answer grew with the profile
+until it hit the token ceiling and was cut off mid-string -- a real workbook of
+17 roles and 24 projects failed outright. The row cap is the other half: a pass
+handed fourteen rows of a wide sheet returns four amalgamated entries however
+plainly the prompt forbids it, while six rows are few enough that copying them
+out one by one is the path of least resistance. Each pass is also told how many
+data rows it holds.
+
+If a pass still comes back with `finish_reason: "length"`, its chunk is halved
+and retried rather than repaired -- a repaired object silently keeps half a
+section. Below 4,000 characters there is nothing left to split and the request
+is a `422` naming the fix: split the file up.
+
+For reference, the real 96k-character, 8-sheet workbook this was built against
+runs as 15 passes in about two minutes, with the largest single answer using a
+quarter of the token budget.
 
 Response `200`:
 
@@ -1254,7 +1280,7 @@ through a refresh.
 |---|---|
 | 400 | Not an importable format, or the file is corrupt |
 | 413 | Over 10MB |
-| 422 | Empty file, or nothing importable in it (including "every sheet was references") |
+| 422 | Empty file, nothing importable in it (including "every sheet was references"), or a chunk that still truncates at the minimum size -- `This file is too dense to import in one go; split it into smaller files...` |
 | 502 | The merge model was unreachable or returned no JSON |
 
 ### `POST /profile/import/apply`

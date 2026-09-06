@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -90,15 +91,7 @@ SUPPORTED_CONTENT_TYPES: dict[str, str] = {
 # a courtesy, not a control.
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
 
-# Above this the merge is split into sequential passes. Azure GPT-4o would
-# accept a larger context, but a single call that has to re-emit a whole profile
-# alongside 60k characters of source starts truncating its own JSON.
-MAX_SINGLE_PASS_CHARS = 60000
-
-MERGE_MAX_TOKENS = 8000
-# The merge is a data-shuffling task, not a writing one. Near-zero temperature
-# keeps two runs over the same document comparable.
-MERGE_TEMPERATURE = 0.1
+# Chunk sizes and the token budget live with the merge itself, further down.
 
 
 class UnsupportedDocumentFormat(Exception):
@@ -119,6 +112,15 @@ class DocumentReadError(Exception):
 
 class ImportProposalError(Exception):
     """Raised when the merge model is unreachable or returns nothing usable."""
+
+
+class DocumentTooDense(Exception):
+    """Raised when even a minimal chunk cannot be merged inside the token budget.
+
+    Not a provider failure and not a bad file: the section being rebuilt is
+    simply larger than one answer can hold. The route answers 422 with the one
+    thing that actually helps -- split the file up.
+    """
 
 
 # --------------------------------------------------------------------------
@@ -450,78 +452,347 @@ def extract_document_text(
 
 
 # --------------------------------------------------------------------------
+# Chunking
+# --------------------------------------------------------------------------
+
+# One merge pass reads at most this much document. The ceiling is on the
+# *input* because the output scales with it: a pass has to re-emit the whole of
+# every section it touches, and 20k characters of spreadsheet is about as much
+# as can be merged and returned inside the token budget below.
+MAX_CHUNK_CHARS = 20000
+
+# And at most this many table rows, whatever their length. The character
+# ceiling alone is not enough: a pass handed fourteen rows of a wide sheet
+# returns four amalgamated entries rather than fourteen, however plainly it is
+# told not to. Six rows is few enough that re-emitting them one by one is the
+# path of least resistance, which is the only instruction a model reliably
+# follows.
+MAX_ROWS_PER_CHUNK = 6
+
+# A chunk that truncates is halved and retried. Below this there is nothing
+# left to split -- the section being rebuilt is simply larger than the output
+# budget -- so the import fails with a message the user can act on rather than
+# looping.
+MIN_CHUNK_CHARS = 4000
+
+# GPT-4o's output ceiling. Generous on purpose: the failure mode this replaced
+# was a whole merged profile truncated at 8000 tokens, and a bigger budget plus
+# the per-section design below means a pass that still truncates is a real
+# signal rather than an inevitability.
+MERGE_MAX_TOKENS = 16000
+
+# The merge is a data-shuffling task, not a writing one. Near-zero temperature
+# keeps two runs over the same document comparable.
+MERGE_TEMPERATURE = 0.1
+
+SHEET_PREFIX = "## Sheet: "
+CONTINUED_SUFFIX = " (continued)"
+
+# A markdown table's separator row: | --- | --- |
+SEPARATOR_PATTERN = re.compile(r"^\|(?:\s*:?-{3,}:?\s*\|)+\s*$")
+
+
+def count_data_rows(chunk: str) -> int:
+    """Count the table rows in a chunk that carry data rather than headings.
+
+    Sent to the model as an explicit target. Without it a pass handed a wide
+    table of long cells quietly economises -- sixteen roles come back as six,
+    each an amalgam of several -- and nothing downstream can tell that apart
+    from a document that really did describe six. A number the model can count
+    itself against is the cheapest correction available.
+    """
+    total = 0
+    for block in re.split(r"\n(?=## Sheet: )", chunk):
+        rows = [
+            line
+            for line in block.split("\n")
+            if line.startswith("|") and not SEPARATOR_PATTERN.match(line)
+        ]
+        # The first "|" line of a rendered sheet is its header row.
+        total += max(len(rows) - 1, 0)
+    return total
+
+
+def _sheet_heading(block: str) -> str:
+    """Return the ``## Sheet: name`` heading a block opens with, or ``""``."""
+    first = block.split("\n", 1)[0]
+    return first if first.startswith(SHEET_PREFIX) else ""
+
+
+def _table_preamble(lines: list[str]) -> tuple[list[str], int]:
+    """Return the header rows to repeat on every part, and where the body starts.
+
+    A markdown table means nothing without its header row: split one in the
+    middle and the second half is a grid of unlabelled cells. So the heading,
+    the header row, and the separator are re-emitted at the top of every
+    continuation.
+
+    Returns:
+        ``(preamble lines, index of the first body line)``. The preamble is
+        empty for a block that is not a table.
+    """
+    for index, line in enumerate(lines):
+        if not line.startswith("|"):
+            continue
+        # A header row is only a header when a separator follows it.
+        if index + 1 < len(lines) and SEPARATOR_PATTERN.match(lines[index + 1]):
+            return lines[: index + 2], index + 2
+        break
+    return [], 0
+
+
+def _split_sheet_block(block: str, limit: int) -> list[str]:
+    """Split one oversized sheet on row boundaries, repeating its header.
+
+    Args:
+        block: One ``## Sheet: ...`` block, or a plain-text block.
+        limit: Maximum characters per part.
+
+    Returns:
+        Two or more parts, each carrying the heading (marked "(continued)"
+        after the first) and the table header. A single row longer than
+        ``limit`` is emitted on its own rather than cut.
+    """
+    lines = block.split("\n")
+    heading = _sheet_heading(block)
+    preamble, body_start = _table_preamble(lines)
+    body = lines[body_start:] if preamble else lines[1:] if heading else lines
+    max_rows = MAX_ROWS_PER_CHUNK if preamble else 0
+
+    if preamble:
+        first_preamble = preamble
+        rest_preamble = [
+            heading + CONTINUED_SUFFIX if heading else "",
+            "",
+        ] + preamble[-2:]
+    else:
+        first_preamble = [heading] if heading else []
+        rest_preamble = [heading + CONTINUED_SUFFIX] if heading else []
+
+    parts: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    current_rows = 0
+
+    def flush() -> None:
+        if not current:
+            return
+        head = first_preamble if not parts else rest_preamble
+        parts.append("\n".join([line for line in head if line is not None] + current))
+
+    for line in body:
+        head = first_preamble if not parts else rest_preamble
+        head_len = sum(len(item) + 1 for item in head)
+        is_row = line.startswith("|") and not SEPARATOR_PATTERN.match(line)
+        too_long = head_len + current_len + len(line) + 1 > limit
+        too_many = bool(max_rows) and is_row and current_rows >= max_rows
+        if current and (too_long or too_many):
+            flush()
+            current = []
+            current_len = 0
+            current_rows = 0
+        current.append(line)
+        current_len += len(line) + 1
+        current_rows += 1 if is_row else 0
+
+    flush()
+    return [part for part in parts if part.strip()] or [block]
+
+
+def split_document(text: str, limit: int = MAX_CHUNK_CHARS) -> list[str]:
+    """Split a rendered document into merge-sized chunks.
+
+    Sheet boundaries first: a sheet is the natural seam, and a chunk that stops
+    at one is a self-describing unit the model can merge on its own. A sheet
+    that is bigger than ``limit`` on its own is split on **row** boundaries with
+    its heading and header row repeated, so no pass ever reads a table body
+    without the columns it belongs to.
+
+    Adjacent small blocks are packed back together, so a workbook of eight tiny
+    sheets is one pass rather than eight.
+
+    Args:
+        text: The rendered document text.
+        limit: Maximum characters per chunk.
+
+    Returns:
+        One or more chunks. Never empty for non-empty input.
+    """
+    if len(text) <= limit and count_data_rows(text) <= MAX_ROWS_PER_CHUNK:
+        return [text]
+
+    blocks: list[str] = []
+    for block in re.split(r"\n(?=## Sheet: )", text):
+        if len(block) <= limit and count_data_rows(block) <= MAX_ROWS_PER_CHUNK:
+            blocks.append(block)
+        else:
+            blocks.extend(_split_sheet_block(block, limit))
+
+    chunks: list[str] = []
+    for block in blocks:
+        fits = chunks and len(chunks[-1]) + len(block) + 2 <= limit
+        room = fits and (
+            count_data_rows(chunks[-1]) + count_data_rows(block) <= MAX_ROWS_PER_CHUNK
+        )
+        if room:
+            chunks[-1] = "{}\n\n{}".format(chunks[-1], block)
+        else:
+            chunks.append(block)
+    return [chunk for chunk in chunks if chunk.strip()] or [text[:limit]]
+
+
+# --------------------------------------------------------------------------
+# Which sections a chunk can touch
+# --------------------------------------------------------------------------
+
+# Matched against a chunk's sheet headings and table header rows -- not its
+# whole text, which mentions everything. The point is to send the model only
+# the existing entries it might need, so both the prompt and the answer stay
+# small.
+SECTION_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "summary": ("summary", "objective", "profile", "about me", "bio"),
+    "work_experience": (
+        "work", "experience", "employment", "job", "role", "position",
+        "internship", "career", "company", "employer",
+    ),
+    "education": (
+        "education", "degree", "academic", "school", "college", "university",
+        "qualification", "cgpa", "gpa",
+    ),
+    "skills": ("skill", "technolog", "tool", "competenc", "language", "stack"),
+    "certifications": (
+        "certificat", "certification", "licen", "credential", "course",
+        "training", "mooc",
+    ),
+    "projects": ("project", "portfolio", "build", "repo"),
+    "achievements": (
+        "achievement", "award", "honour", "honor", "accomplish", "prize",
+        "scholarship", "extracurricular", "volunteer", "responsibility",
+        "activit", "competition", "hackathon",
+    ),
+    "publications": (
+        "publication", "paper", "patent", "research", "journal", "conference",
+        "talk", "poster", "thesis",
+    ),
+}
+
+
+def _label_lines(chunk: str) -> str:
+    """Return the parts of a chunk that name what it holds, lower-cased.
+
+    Headings and header rows only. A data row mentioning "Kubernetes project
+    lead" should not pull the whole projects section into the prompt.
+    """
+    labels: list[str] = []
+    lines = chunk.split("\n")
+    for index, line in enumerate(lines):
+        if line.startswith(SHEET_PREFIX) or line.startswith("#"):
+            labels.append(line)
+        elif line.startswith("|") and index + 1 < len(lines):
+            if SEPARATOR_PATTERN.match(lines[index + 1]):
+                labels.append(line)
+    return " ".join(labels).lower()
+
+
+def guess_sections(chunk: str) -> tuple[str, ...]:
+    """Return the profile sections a chunk plausibly carries.
+
+    A superset, deliberately: guessing one section too many costs a few hundred
+    tokens of context, while guessing one too few would hand the model a
+    section to rebuild without showing it what is already there.
+
+    A chunk whose labels match nothing -- prose, a PDF, an untitled sheet --
+    falls back to **every** section, which is correct but expensive; the
+    truncation retry in :func:`_merge_chunk` is what keeps that case safe.
+
+    Args:
+        chunk: One chunk from :func:`split_document`.
+
+    Returns:
+        Section names in ``PROFILE_SECTIONS`` order.
+    """
+    labels = _label_lines(chunk)
+    matched = tuple(
+        section
+        for section in PROFILE_SECTIONS
+        if any(keyword in labels for keyword in SECTION_KEYWORDS[section])
+    )
+    return matched or PROFILE_SECTIONS
+
+
+# --------------------------------------------------------------------------
 # The merge prompt
 # --------------------------------------------------------------------------
 
+# One pass merges one chunk into the sections that chunk affects, and returns
+# only those sections. That is the whole reason this works on a real career
+# workbook: asking for the entire profile back on every pass made the answer
+# grow with the profile until it hit the token ceiling and was cut off
+# mid-string.
 MERGE_SYSTEM_PROMPT = """\
-You merge one supplementary career document into an existing structured career \
-profile. You are a merger, not a writer: every value you emit must already \
-appear in the existing profile or in the document.
+You merge one part of a supplementary career document into an existing \
+structured career profile. You are a merger, not a writer: every value you emit \
+must already appear in the existing sections or in the document part.
 
-Return ONLY a JSON object with exactly these keys and no others -- the WHOLE \
-merged profile, not a patch:
+Return ONLY a JSON object whose keys are a SUBSET of these eight section names:
 
-{
-  "summary": string,
-  "work_experience": [
-    {
-      "title": string, "company": string, "location": string,
-      "start_date": string, "end_date": string, "current": boolean,
-      "employment_type": string, "highlights": [string], "awards": [string]
-    }
-  ],
-  "education": [
-    {
-      "degree": string, "institution": string, "field": string,
-      "start_date": string, "end_date": string, "details": string,
-      "gpa": string, "coursework": [string], "honors": [string]
-    }
-  ],
-  "skills": [string],
-  "certifications": [
-    {
-      "name": string, "issuer": string, "year": string, "expires": string,
-      "credential_url": string, "description": string
-    }
-  ],
-  "projects": [
-    {
-      "name": string, "description": string, "technologies": [string],
-      "start_date": string, "end_date": string, "highlights": [string],
-      "link": string, "links": {"github": string, "live": string, "demo": string}
-    }
-  ],
-  "achievements": [string],
-  "publications": [
-    {"title": string, "authors": string, "url": string, "status": string,
-     "year": string}
-  ]
-}
+  summary, work_experience, education, skills, certifications, projects, \
+achievements, publications
+
+INCLUDE A SECTION ONLY IF THIS DOCUMENT PART SAYS SOMETHING ABOUT IT. Omit \
+every other key entirely. Do not return a section just because it was given to \
+you as context.
+
+For each section you do return, return that section's COMPLETE merged value: \
+every existing entry you were given, plus every new one from the document part. \
+Section shapes:
+
+"summary": string
+"work_experience": [{"title": string, "company": string, "location": string,
+  "start_date": string, "end_date": string, "current": boolean,
+  "employment_type": string, "highlights": [string], "awards": [string]}]
+"education": [{"degree": string, "institution": string, "field": string,
+  "start_date": string, "end_date": string, "details": string, "gpa": string,
+  "coursework": [string], "honors": [string]}]
+"skills": [string]
+"certifications": [{"name": string, "issuer": string, "year": string,
+  "expires": string, "credential_url": string, "description": string}]
+"projects": [{"name": string, "description": string, "technologies": [string],
+  "start_date": string, "end_date": string, "highlights": [string],
+  "link": string, "links": {"github": string, "live": string, "demo": string}}]
+"achievements": [string]
+"publications": [{"title": string, "authors": string, "url": string,
+  "status": string, "year": string}]
 
 Rules:
 
-1. NEVER DROP EXISTING DATA. Every entry in the existing profile must appear in \
-your output, either unchanged or enriched. Removing one is the single worst \
-thing you can do here.
-2. Match an existing entry to a document entry only when they are clearly the \
+1. NEVER DROP EXISTING DATA. Every entry you were given in a section you return \
+must appear in your output for that section, unchanged or enriched. Removing \
+one is the single worst thing you can do here.
+2. THE DOCUMENT IS A TABLE: ONE DATA ROW IS ONE ENTRY. Every data row in \
+this part becomes its own entry in the section it belongs to. Never fold two \
+rows of the same table into one entry -- not two roles at the same employer, \
+not two projects sharing a technology, not a role and the row below it. The \
+header line above says how many data rows this part holds; your output for \
+the sections it covers must account for every one of them.
+2a. Match an existing entry to a document row only when they are clearly the \
 same thing: the same employer and role, the same institution and degree, the \
-same project, certification, or publication name. A different role at the same \
-employer is a separate entry.
-3. When they match, merge field by field: for each field keep the more \
-complete value -- a filled value beats an empty one, and a more specific one (a \
-full date, a full title) beats a vaguer one. For list fields (highlights, \
-skills, technologies, coursework, honors, awards) take the union, keeping the \
-existing order first and appending what is new. Do not duplicate a bullet that \
-is merely reworded.
-4. Add every entry the document describes that the existing profile does not \
-have.
+same project, certification, or publication name. A different role at the \
+same employer is a separate entry.
+3. When they match, merge field by field: keep the more complete value -- a \
+filled value beats an empty one, a full date beats a vague one. For list fields \
+(highlights, skills, technologies, coursework, honors, awards) take the union, \
+existing order first, new items appended. Do not duplicate a bullet that is \
+merely reworded.
+4. Add every entry the document part describes that the existing section does \
+not have.
 5. NEVER INVENT. Do not infer a date, an employer, a grade, or a metric that \
 neither source states. Leave a string empty ("") and an array empty ([]) \
 instead. Do not rewrite, embellish, or summarise wording -- copy it.
 6. skills: short tokens only, one technology, tool, language, or named \
-competency each ("Python", "PostgreSQL", "Stakeholder management"). Split any \
+competency each ("Python", "PostgreSQL", "Stakeholder management"). Split a \
 grouped cell like "Languages: Python, Go, SQL" into separate entries, drop the \
-category label, and de-duplicate case-insensitively against the existing list.
+category label, de-duplicate case-insensitively.
 7. achievements: one string each, written as \
 "Name -- Organization (Date): description", dropping any part the sources do \
 not state. An achievement that is really a publication belongs in \
@@ -533,103 +804,243 @@ not reformat them and do not compute durations. Set "current": true only when \
 an end date reads as ongoing, and then leave end_date "".
 10. projects: put each URL in "links" under the slot that fits -- repository in \
 "github", deployed site in "live", video or walkthrough in "demo" -- and also \
-set "link" to the first of those, so older readers still see a URL.
+set "link" to the first of those.
 11. Ignore any contact details for other people: referees, recommenders, \
 managers named as references. Do not return anyone's email address or phone \
 number, including the profile owner's.
-12. Every key above must be present in your output, even when its value is \
-empty.
+12. A row split across two parts of the document may arrive without its \
+header; use the repeated header row at the top of the part.
 
 Output the JSON object and nothing else. No prose, no explanation, no markdown \
 code fences.\
 """
 
 MERGE_USER_TEMPLATE = """\
-EXISTING PROFILE (JSON):
+SECTIONS YOU MAY RETURN (omit any this part says nothing about):
+{section_names}
+
+EXISTING ENTRIES FOR THOSE SECTIONS (JSON -- merge into these, never drop them):
 
 {existing_json}
 
-DOCUMENT ({filename}){part_label}:
+DOCUMENT PART{part_label} (from {filename}){row_note}:
 
 {document_text}
 
-Return the merged profile as one JSON object.\
+Return one JSON object holding only the sections this part affects.\
 """
 
 
-def split_document(text: str, limit: int = MAX_SINGLE_PASS_CHARS) -> list[str]:
-    """Split a long document into merge-sized parts, on sheet boundaries first.
+def _existing_context(running: dict[str, Any], sections: tuple[str, ...]) -> str:
+    """Serialise only the sections this pass may return."""
+    return json.dumps(
+        {section: running.get(section) for section in sections}, ensure_ascii=False
+    )
 
-    A workbook rendered by this module is a run of ``## Sheet:`` blocks, and a
-    sheet is the natural seam: splitting mid-table would hand the second pass a
-    header-less body it cannot read. A single oversized block (one enormous
-    sheet, or a long prose document with no sheets at all) falls back to a
-    line-boundary split.
+
+def combine_sections(
+    running: dict[str, Any],
+    returned: dict[str, Any],
+    context_sections: tuple[str, ...],
+) -> dict[str, Any]:
+    """Fold one pass's returned sections into the running profile.
+
+    Deterministic, and the reason a per-section merge is safe:
+
+    * A section the pass did not return is left exactly as it was. The model
+      never has to re-emit a section it was not asked about, which is what keeps
+      each answer small.
+    * A section it did return **replaces** the running one -- it is a merge of
+      it, not an addition to it.
+    * Except that any existing entry missing from the replacement is put back,
+      keyed the same way :func:`diff_profiles` matches entries. The prompt
+      forbids dropping an entry; this makes it impossible, and logs it when the
+      model tries.
+    * A section returned without having been given as context is **unioned**
+      rather than replacing, because the model was never shown what it would be
+      overwriting.
 
     Args:
-        text: The rendered document text.
-        limit: Maximum characters per part.
+        running: The profile so far.
+        returned: The model's object for this pass.
+        context_sections: The sections whose entries were sent as context.
 
     Returns:
-        One or more parts, each at most ``limit`` characters except where a
-        single line is longer than that.
+        A new dict; neither argument is mutated.
     """
-    if len(text) <= limit:
-        return [text]
-
-    blocks: list[str] = []
-    for block in re.split(r"\n(?=## Sheet: )", text):
-        if len(block) <= limit:
-            blocks.append(block)
+    merged = dict(running)
+    for section, value in returned.items():
+        if section not in PROFILE_SECTIONS:
             continue
-        current = ""
-        for line in block.splitlines(keepends=True):
-            if current and len(current) + len(line) > limit:
-                blocks.append(current)
-                current = ""
-            current += line
-        if current:
-            blocks.append(current)
 
-    parts: list[str] = []
-    for block in blocks:
-        if parts and len(parts[-1]) + len(block) + 2 <= limit:
-            parts[-1] = "{}\n\n{}".format(parts[-1], block)
+        if section == "summary":
+            summary = coerce_parsed_profile({"summary": value}).summary
+            if summary:
+                merged["summary"] = summary
+            continue
+
+        cleaned = coerce_parsed_profile({section: value}).model_dump()[section]
+        existing = merged.get(section) or []
+
+        if section in context_sections:
+            keys = {_section_key(section, entry) for entry in cleaned}
+            restored = [
+                entry
+                for entry in existing
+                if _section_key(section, entry) not in keys
+            ]
+            if restored:
+                logger.warning(
+                    "import merge dropped %d %s entr(ies); restoring them",
+                    len(restored),
+                    section,
+                )
+            merged[section] = cleaned + restored
         else:
-            parts.append(block)
-    return [part for part in parts if part.strip()] or [text[:limit]]
+            keys = {_section_key(section, entry) for entry in existing}
+            merged[section] = list(existing) + [
+                entry for entry in cleaned if _section_key(section, entry) not in keys
+            ]
+
+    return ParsedProfile.model_validate(merged).model_dump()
 
 
-def _merge_once(
-    existing: dict[str, Any],
-    document_text: str,
+def _section_key(section: str, entry: Any) -> str:
+    """Identity of one entry, for both list-of-object and list-of-string sections."""
+    if isinstance(entry, dict):
+        return entry_key(section, entry)
+    return normalise_key(entry)
+
+
+def _merge_chunk(
+    running: dict[str, Any],
+    chunk: str,
     filename: str,
-    part_label: str = "",
-) -> tuple[ParsedProfile, str]:
-    """Run one merge pass and return the coerced profile and the provider used."""
+    *,
+    label: str,
+    provider_seen: list[str],
+    depth: int = 0,
+) -> dict[str, Any]:
+    """Merge one chunk, halving and retrying if the answer was cut off.
+
+    A ``finish_reason`` of ``"length"`` means the response hit the token ceiling
+    mid-JSON. Repairing that would silently keep half a section, so the chunk is
+    split in two and each half merged in turn -- less document per pass means a
+    smaller answer. The recursion stops at :data:`MIN_CHUNK_CHARS`, below which
+    the section being rebuilt is simply too big to return and the import fails
+    with a message that says what to do.
+
+    Raises:
+        DocumentTooDense: When a chunk at the floor still truncates.
+        ImportProposalError: When the provider fails or returns no JSON.
+    """
+    sections = guess_sections(chunk)
+    rows_in_chunk = count_data_rows(chunk)
     messages = [
         {"role": "system", "content": MERGE_SYSTEM_PROMPT},
         {
             "role": "user",
             "content": MERGE_USER_TEMPLATE.format(
-                existing_json=json.dumps(existing, ensure_ascii=False),
+                section_names=", ".join(sections),
+                existing_json=_existing_context(running, sections),
+                part_label=" {}".format(label) if label else "",
                 filename=filename or "document",
-                part_label=part_label,
-                document_text=document_text,
+                row_note=(
+                    ", holding {} data rows -- each one is its own entry".format(
+                        rows_in_chunk
+                    )
+                    if rows_in_chunk
+                    else ""
+                ),
+                document_text=chunk,
             ),
         },
     ]
-    content = llm.complete_json(
-        messages,
-        max_tokens=MERGE_MAX_TOKENS,
-        temperature=MERGE_TEMPERATURE,
-        prefer=llm.AZURE,
-        purpose="profile import",
+
+    started = time.monotonic()
+    try:
+        content, meta = llm.complete_json_with_meta(
+            messages,
+            max_tokens=MERGE_MAX_TOKENS,
+            temperature=MERGE_TEMPERATURE,
+            prefer=llm.AZURE,
+            purpose="profile import",
+        )
+    except Exception as exc:
+        logger.exception("profile import merge failed on part %s", label or "1")
+        raise ImportProposalError(
+            "Could not read a profile update out of this file: {}".format(exc)
+        ) from exc
+    elapsed = time.monotonic() - started
+
+    if meta.get("provider"):
+        provider_seen.append(str(meta["provider"]))
+
+    if meta.get("finish_reason") == "length":
+        logger.warning(
+            "import merge part %s was truncated at %s tokens after %.1fs "
+            "(%d chars in, sections=%s); re-splitting",
+            label or "1",
+            meta.get("completion_tokens"),
+            elapsed,
+            len(chunk),
+            ",".join(sections),
+        )
+        halves = split_document(chunk, max(len(chunk) // 2, MIN_CHUNK_CHARS))
+        if len(halves) < 2 or len(chunk) <= MIN_CHUNK_CHARS:
+            raise DocumentTooDense(
+                "This file is too dense to import in one go; split it into "
+                "smaller files (one section or a few sheets each) and import "
+                "them one at a time."
+            )
+        for index, half in enumerate(halves, start=1):
+            running = _merge_chunk(
+                running,
+                half,
+                filename,
+                label="{}.{}".format(label or "1", index),
+                provider_seen=provider_seen,
+                depth=depth + 1,
+            )
+        return running
+
+    returned = resume_parser.parse_json_response(content)
+    if not isinstance(returned, dict):
+        raise ImportProposalError(
+            "The merge model did not return a JSON object for part {}.".format(
+                label or "1"
+            )
+        )
+
+    combined = combine_sections(running, returned, sections)
+    gained = sum(
+        len(combined.get(section) or []) - len(running.get(section) or [])
+        for section in PROFILE_SECTIONS
+        if isinstance(combined.get(section), list)
     )
-    return (
-        coerce_parsed_profile(resume_parser.parse_json_response(content)),
-        llm.provider_of(content, ""),
+    if rows_in_chunk and gained < rows_in_chunk:
+        # Not an error on its own: a row can update an existing entry instead of
+        # adding one, and a table can continue into the next part. Logged
+        # because row-folding is invisible otherwise, and this is where it shows.
+        logger.info(
+            "import merge part %s added %d entries from %d data rows",
+            label or "1",
+            gained,
+            rows_in_chunk,
+        )
+    logger.info(
+        "import merge part %s: %d chars in, %d rows, context=%s, returned=%s, "
+        "%s tokens out, finish=%s, %.1fs",
+        label or "1",
+        len(chunk),
+        rows_in_chunk,
+        ",".join(sections),
+        ",".join(key for key in returned if key in PROFILE_SECTIONS) or "none",
+        meta.get("completion_tokens"),
+        meta.get("finish_reason"),
+        elapsed,
     )
+    return combined
 
 
 def propose_import(
@@ -643,11 +1054,16 @@ def propose_import(
     decides section by section what to keep, and ``/profile/import/apply`` is
     what writes.
 
-    A document longer than :data:`MAX_SINGLE_PASS_CHARS` is merged in sequential
-    passes, each pass taking the previous pass's output as its "existing"
-    profile. Sequential rather than parallel because the passes are not
-    independent: the second one has to see what the first added, or a role that
-    appears on two sheets is added twice.
+    The document is split into chunks of at most :data:`MAX_CHUNK_CHARS` and
+    merged **one section at a time**: each pass is shown only the existing
+    entries of the sections its chunk plausibly touches, and returns only those
+    sections. Both halves of that matter. Asking for the whole profile back on
+    every pass made the answer grow with the profile -- a workbook with 17 roles
+    and 24 projects truncated mid-string and failed the whole import -- and
+    sending the whole profile as context made the prompt grow with it too.
+
+    Passes run in order, not in parallel: each one merges into the result of the
+    last, so a role listed on two sheets is merged rather than added twice.
 
     Args:
         existing_parsed_json: The stored profile, or None for a user who has
@@ -661,6 +1077,7 @@ def propose_import(
 
     Raises:
         EmptyDocumentText: If there is no document text to merge.
+        DocumentTooDense: If a chunk still truncates at the minimum size.
         ImportProposalError: If the model is unreachable or returns no JSON.
     """
     text = (document_text or "").strip()
@@ -668,31 +1085,35 @@ def propose_import(
         raise EmptyDocumentText("There is no document text to import.")
 
     existing = ParsedProfile.model_validate(existing_parsed_json or {}).model_dump()
-    # The limit is read here, not defaulted inside split_document, so a test
-    # (or a future setting) can lower it without reaching into a signature.
-    parts = split_document(text, MAX_SINGLE_PASS_CHARS)
-    merged = ParsedProfile.model_validate(existing)
-    provider = ""
+    chunks = split_document(text, MAX_CHUNK_CHARS)
+    running = dict(existing)
+    providers: list[str] = []
 
-    for index, part in enumerate(parts, start=1):
-        label = "" if len(parts) == 1 else " -- part {} of {}".format(index, len(parts))
-        try:
-            merged, provider = _merge_once(
-                merged.model_dump(), part, filename, part_label=label
-            )
-        except Exception as exc:
-            logger.exception("profile import merge failed on part %d", index)
-            raise ImportProposalError(
-                "Could not read a profile update out of this file: {}".format(exc)
-            ) from exc
+    started = time.monotonic()
+    for index, chunk in enumerate(chunks, start=1):
+        label = "{}/{}".format(index, len(chunks))
+        running = _merge_chunk(
+            running, chunk, filename, label=label, provider_seen=providers
+        )
 
-    proposal = merged.model_dump()
+    proposal = ParsedProfile.model_validate(running).model_dump()
     changes, summary = diff_profiles(existing, proposal)
+    logger.info(
+        "import proposal for %s: %d chunk(s), %.1fs total, %d added, %d updated, "
+        "%d unchanged, %d removed",
+        filename or "document",
+        len(chunks),
+        time.monotonic() - started,
+        summary["added"],
+        summary["updated"],
+        summary["unchanged"],
+        summary["removed"],
+    )
     return {
         "proposal": proposal,
         "changes": changes,
         "summary": summary,
-        "provider": provider,
+        "provider": providers[-1] if providers else "",
     }
 
 

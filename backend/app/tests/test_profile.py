@@ -1804,3 +1804,52 @@ def test_render_profile_text_does_not_repeat_a_project_link() -> None:
         }
     )
     assert text.count("https://github.com/x") == 1
+
+
+# ==========================================================================
+# Recovering a truncated model response
+# ==========================================================================
+
+# The real fix for a cut-off response is to ask for less of it, which is what
+# import_service does when finish_reason is "length". This is the last resort
+# under that: some data beats none, and the WARNING says the result is partial.
+
+
+def test_repair_truncated_json_closes_open_structures() -> None:
+    """A response cut off mid-string loses that entry and keeps the rest."""
+    truncated = (
+        '{"skills": ["Python", "Go"], "work_experience": [{"title": "Engineer", '
+        '"company": "Kestrel", "highlights": ["Shipped it", "Half a bul'
+    )
+    parsed = resume_parser.parse_json_response(truncated)
+
+    assert parsed["skills"] == ["Python", "Go"]
+    assert parsed["work_experience"][0]["company"] == "Kestrel"
+    assert parsed["work_experience"][0]["highlights"] == ["Shipped it"]
+
+
+def test_repair_truncated_json_drops_a_key_with_no_value() -> None:
+    """A dangling key would be invalid JSON, so it goes with its comma."""
+    parsed = resume_parser.parse_json_response('{"a": "x", "b":')
+    assert parsed == {"a": "x"}
+
+
+def test_repair_truncated_json_keeps_completed_bare_literals() -> None:
+    """A comma proves the value before it finished, numbers included."""
+    parsed = resume_parser.parse_json_response('{"a": 1, "b": [1, 2,')
+    assert parsed == {"a": 1, "b": [1, 2]}
+
+
+def test_repair_truncated_json_gives_up_on_a_non_object() -> None:
+    """Prose is not a truncated object, and pretending otherwise hides a bug."""
+    assert resume_parser.repair_truncated_json("no json at all") is None
+    with pytest.raises(ProfileExtractionError):
+        resume_parser.parse_json_response("no json at all")
+
+
+def test_repair_is_not_reached_by_a_well_formed_response() -> None:
+    """The repair only ever runs after both honest parses have failed."""
+    assert resume_parser.parse_json_response('{"valid": true}') == {"valid": True}
+    assert resume_parser.parse_json_response(
+        'Here you go:\n```json\n{"valid": true}\n```'
+    ) == {"valid": True}

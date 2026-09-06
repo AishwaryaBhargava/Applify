@@ -111,6 +111,43 @@ class ProviderText(str):
         return instance
 
 
+class CompletionText(str):
+    """A raw provider response that also remembers how it ended.
+
+    ``finish_reason`` is the one piece of provider metadata a caller cannot
+    reconstruct from the text: a JSON body cut off at the token ceiling and one
+    the model chose to end look identical until it parses -- and a *nearly*
+    complete object can parse and still be missing half a list.
+
+    A ``str`` subclass for the same reason :class:`ProviderText` is one, and the
+    attributes are read with ``getattr`` everywhere so a test double that
+    returns a plain ``str`` keeps working.
+    """
+
+    finish_reason: str | None
+    completion_tokens: int | None
+
+    def __new__(
+        cls,
+        text: str,
+        finish_reason: str | None = None,
+        completion_tokens: int | None = None,
+    ) -> "CompletionText":
+        instance = super().__new__(cls, text)
+        instance.finish_reason = finish_reason
+        instance.completion_tokens = completion_tokens
+        return instance
+
+
+def _completion_meta(completion: Any) -> tuple[str | None, int | None]:
+    """Pull the finish reason and output token count off an SDK response."""
+    choices = getattr(completion, "choices", None) or []
+    finish_reason = getattr(choices[0], "finish_reason", None) if choices else None
+    usage = getattr(completion, "usage", None)
+    completion_tokens = getattr(usage, "completion_tokens", None)
+    return finish_reason, completion_tokens
+
+
 class ProviderStream:
     """An iterator of text chunks that records which provider served them.
 
@@ -268,7 +305,10 @@ def _complete_groq_json(
         max_tokens=max_tokens,
         response_format={"type": "json_object"},
     )
-    return completion.choices[0].message.content or ""
+    finish_reason, completion_tokens = _completion_meta(completion)
+    return CompletionText(
+        completion.choices[0].message.content or "", finish_reason, completion_tokens
+    )
 
 
 def _complete_azure_json(
@@ -289,7 +329,10 @@ def _complete_azure_json(
         max_tokens=max_tokens,
         response_format={"type": "json_object"},
     )
-    return completion.choices[0].message.content or ""
+    finish_reason, completion_tokens = _completion_meta(completion)
+    return CompletionText(
+        completion.choices[0].message.content or "", finish_reason, completion_tokens
+    )
 
 
 def _open_groq_stream(
@@ -459,10 +502,38 @@ def complete_json(
         Whatever the provider raised, once fallback is impossible or the
         fallback provider failed too.
     """
+    raw, provider = _complete_with_fallback(
+        messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        prefer=prefer,
+        purpose=purpose,
+        max_attempts=max_attempts,
+        base_delay=base_delay,
+    )
+    return ProviderText(str(raw), provider)
+
+
+def _complete_with_fallback(
+    messages: list[dict[str, str]],
+    *,
+    max_tokens: int,
+    temperature: float,
+    prefer: str,
+    purpose: str,
+    max_attempts: int,
+    base_delay: float,
+) -> tuple[Any, str]:
+    """Run a blocking completion on the preferred provider, then the other one.
+
+    Returns the provider's **raw** return value rather than a string, so a
+    caller that needs ``finish_reason`` can read it off the
+    :class:`CompletionText` before it is flattened.
+    """
     primary = _normalise(prefer)
     fallback = _other(primary)
 
-    def run(provider: str) -> str:
+    def run(provider: str) -> Any:
         return _attempt(
             lambda: _complete(
                 provider, messages, max_tokens=max_tokens, temperature=temperature
@@ -472,13 +543,53 @@ def complete_json(
         )
 
     try:
-        return ProviderText(run(primary), primary)
+        return run(primary), primary
     except Exception as exc:
         if not _fallback_allowed(exc, fallback, purpose):
             raise
         _log_fallback(primary, fallback, purpose)
 
-    return ProviderText(run(fallback), fallback)
+    return run(fallback), fallback
+
+
+def complete_json_with_meta(
+    messages: list[dict[str, str]],
+    *,
+    max_tokens: int,
+    temperature: float,
+    prefer: str = GROQ,
+    purpose: str = "completion",
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    base_delay: float = DEFAULT_BASE_DELAY,
+) -> tuple[ProviderText, dict[str, Any]]:
+    """:func:`complete_json`, plus how the completion ended.
+
+    The extra return value exists for one caller: the profile import, which
+    re-splits its input and tries again when a response was cut off at the token
+    ceiling. Every other caller wants a string and uses :func:`complete_json`,
+    which is why this is a second function rather than a changed signature.
+
+    Returns:
+        ``(text, meta)`` where ``meta`` is ``{"provider", "finish_reason",
+        "completion_tokens"}``. ``finish_reason`` is ``"stop"`` for a complete
+        answer and ``"length"`` for a truncated one; it is None when the
+        provider (or a test double) did not report one.
+    """
+    raw, provider = _complete_with_fallback(
+        messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        prefer=prefer,
+        purpose=purpose,
+        max_attempts=max_attempts,
+        base_delay=base_delay,
+    )
+    meta = {
+        "provider": provider,
+        "finish_reason": getattr(raw, "finish_reason", None),
+        "completion_tokens": getattr(raw, "completion_tokens", None),
+    }
+    return ProviderText(str(raw), provider), meta
 
 
 def stream_text(

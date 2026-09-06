@@ -296,7 +296,7 @@ export default function ProfileImportUpload({
           <p className="text-[12px] leading-relaxed text-text-muted">
             {stage === 'uploading'
               ? 'Sending your file securely. The file itself is never stored.'
-              : 'Reading your file and merging it with your profile. This usually takes 10 to 40 seconds — nothing is saved until you review it.'}
+              : 'Reading your file and merging it with your profile. This usually takes under a minute, or a few minutes for a large spreadsheet — nothing is saved until you review it.'}
           </p>
         </div>
       )}

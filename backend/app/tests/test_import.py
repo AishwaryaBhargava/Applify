@@ -27,6 +27,7 @@ from app.services.import_service import (
     SKIPPED_REFERENCES,
     diff_profiles,
     extract_document_text,
+    guess_sections,
     is_reference_sheet,
     propose_import,
     split_document,
@@ -91,27 +92,53 @@ def make_csv(rows: list[list[str]]) -> bytes:
 
 @pytest.fixture
 def mock_merge(monkeypatch: pytest.MonkeyPatch):
-    """Replace the merge model call with a canned JSON body.
+    """Replace the merge model call with a canned body and a settable meta.
 
     Returns a setter and records the calls, so a test can assert both on what
-    came back and on what was sent -- which provider was preferred, and how many
-    passes ran.
+    came back and on what was sent -- which provider was preferred, what
+    context each pass was given, and how many passes ran. ``set_response`` also
+    takes ``finish_reason`` so the truncation retry can be driven, and
+    ``set_response.sequence`` takes a callable answering per call.
     """
     calls: list[dict] = []
+    state: dict = {}
 
-    def set_response(body) -> None:
-        payload = body if isinstance(body, str) else json.dumps(body)
-
-        def fake_complete_json(messages, **kwargs):
-            calls.append({"messages": messages, **kwargs})
-            return payload
-
-        monkeypatch.setattr(
-            import_service.llm, "complete_json", fake_complete_json
+    def fake_with_meta(messages, **kwargs):
+        calls.append({"messages": messages, **kwargs})
+        answer = state["answer"]
+        body, meta = answer(len(calls), messages) if callable(answer) else (
+            answer,
+            state["meta"],
         )
+        payload = body if isinstance(body, str) else json.dumps(body)
+        return payload, dict(meta)
+
+    monkeypatch.setattr(
+        import_service.llm, "complete_json_with_meta", fake_with_meta
+    )
+
+    def set_response(body, **meta) -> None:
+        state["answer"] = body
+        state["meta"] = {
+            "provider": "azure",
+            "finish_reason": "stop",
+            "completion_tokens": 120,
+            **meta,
+        }
+
+    def sequence(answer) -> None:
+        """Answer each call from a callable ``(call_number, messages)``."""
+        state["answer"] = answer
 
     set_response(EXISTING_PROFILE)
     set_response.calls = calls  # type: ignore[attr-defined]
+    set_response.sequence = sequence  # type: ignore[attr-defined]
+    set_response.meta = lambda **kw: {  # type: ignore[attr-defined]
+        "provider": "azure",
+        "finish_reason": "stop",
+        "completion_tokens": 120,
+        **kw,
+    }
     return set_response
 
 
@@ -345,11 +372,175 @@ def test_split_document_splits_on_sheet_boundaries() -> None:
     assert sum(part.count("row") for part in parts) == 800
 
 
-def test_split_document_falls_back_to_lines_for_one_huge_block() -> None:
-    """A single oversized sheet is split on line boundaries rather than refused."""
+def test_split_document_packs_small_sheets_together() -> None:
+    """Eight tiny sheets are one pass, not eight."""
+    text = "\n".join("## Sheet: S{}\n| a |".format(i) for i in range(8))
+    assert split_document(text, limit=1000) == [text]
+
+
+def _sheet_table(name: str, rows: int) -> str:
+    """A markdown table of `rows` data rows, as extract_xlsx would render it."""
+    lines = ["## Sheet: {}".format(name), "", "| Role | Company |", "| --- | --- |"]
+    lines += ["| Engineer {} | Aldermill |".format(index) for index in range(rows)]
+    return "\n".join(lines)
+
+
+def test_split_document_splits_a_huge_sheet_on_row_boundaries() -> None:
+    """A sheet bigger than the limit is cut between rows, never mid-row."""
+    parts = split_document(_sheet_table("Work Experiences", 120), limit=900)
+
+    assert len(parts) > 1
+    for part in parts:
+        for line in part.split("\n"):
+            assert not line.startswith("| Engineer") or line.endswith("|")
+    rows = sum(part.count("| Engineer ") for part in parts)
+    assert rows == 120
+
+
+def test_split_document_repeats_the_header_on_every_continuation() -> None:
+    """A table body without its header is a grid of unlabelled cells."""
+    parts = split_document(_sheet_table("Work Experiences", 120), limit=900)
+
+    assert parts[0].startswith("## Sheet: Work Experiences\n")
+    for part in parts[1:]:
+        assert part.startswith("## Sheet: Work Experiences (continued)")
+        assert "| Role | Company |" in part
+        assert "| --- | --- |" in part
+
+
+def test_split_document_caps_the_rows_in_one_chunk() -> None:
+    """Characters are not the only limit: a pass sees a countable few rows.
+
+    A pass handed a whole wide sheet returns a summary of it -- fourteen roles
+    as four amalgams -- and no wording in the prompt reliably prevents that.
+    Six rows is few enough that copying them out one by one is the easiest
+    thing the model can do.
+    """
+    parts = split_document(_sheet_table("Work Experiences", 20), limit=100000)
+
+    assert len(parts) == 4
+    for part in parts:
+        assert import_service.count_data_rows(part) <= import_service.MAX_ROWS_PER_CHUNK
+    assert sum(import_service.count_data_rows(part) for part in parts) == 20
+
+
+def test_split_document_does_not_pack_past_the_row_cap() -> None:
+    """Packing small sheets together stops at the same ceiling."""
+    text = "\n".join(_sheet_table("S{}".format(index), 4) for index in range(3))
+    parts = split_document(text, limit=100000)
+
+    assert len(parts) > 1
+    for part in parts:
+        assert import_service.count_data_rows(part) <= import_service.MAX_ROWS_PER_CHUNK
+
+def test_split_document_falls_back_to_lines_for_a_huge_block_of_prose() -> None:
+    """A long document with no table is still split, on line boundaries."""
     parts = split_document("## Sheet: S\n" + ("row\n" * 1000), limit=500)
     assert len(parts) > 1
-    assert all(len(part) <= 500 for part in parts)
+    assert all(len(part) <= 600 for part in parts)
+
+
+# ==========================================================================
+# Which sections a chunk may touch
+# ==========================================================================
+
+
+def test_guess_sections_reads_sheet_headings() -> None:
+    """The heading is what says which section a chunk is about."""
+    assert "education" in guess_sections("## Sheet: Education\n| Degree |")
+    assert "publications" in guess_sections("## Sheet: Publications\n| Title |")
+    assert "work_experience" in guess_sections(
+        "## Sheet: Work Experiences (continued)\n| Role |"
+    )
+
+
+def test_guess_sections_reads_table_headers() -> None:
+    """An unhelpfully named sheet is still identified by its columns."""
+    sections = guess_sections("## Sheet: Tab1\n\n| Degree | University |\n| --- | --- |")
+    assert "education" in sections
+
+
+def test_guess_sections_ignores_body_rows() -> None:
+    """A data row mentioning a word must not pull a whole section into context."""
+    chunk = "## Sheet: Skills\n\n| Skill |\n| --- |\n| Project management |"
+    assert "projects" not in guess_sections(chunk)
+
+
+def test_guess_sections_falls_back_to_everything() -> None:
+    """Prose names no sheets, so every section is offered as context."""
+    from app.api.schemas.profile import PROFILE_SECTIONS
+
+    assert guess_sections("Some free text with no headings") == PROFILE_SECTIONS
+
+
+# ==========================================================================
+# Combining one pass's answer
+# ==========================================================================
+
+
+def test_combine_replaces_a_section_that_was_given_as_context() -> None:
+    """A returned section is a merge of the one sent, so it replaces it."""
+    running = {"skills": ["Python", "PostgreSQL"]}
+    combined = import_service.combine_sections(
+        running, {"skills": ["Python", "PostgreSQL", "Kafka"]}, ("skills",)
+    )
+    assert combined["skills"] == ["Python", "PostgreSQL", "Kafka"]
+
+
+def test_combine_leaves_untouched_sections_alone() -> None:
+    """A section the pass did not return keeps every entry it had."""
+    running = {
+        "skills": ["Python"],
+        "work_experience": [{"title": "Engineer", "company": "Kestrel"}],
+    }
+    combined = import_service.combine_sections(
+        running, {"skills": ["Python", "Go"]}, ("skills",)
+    )
+    assert combined["work_experience"][0]["company"] == "Kestrel"
+
+
+def test_combine_restores_an_entry_the_model_dropped() -> None:
+    """The prompt forbids dropping an entry; the combine makes it impossible."""
+    running = {
+        "work_experience": [
+            {"title": "Senior Backend Engineer", "company": "Kestrel Payments"},
+            {"title": "Backend Engineer", "company": "Northwind"},
+        ]
+    }
+    combined = import_service.combine_sections(
+        running,
+        {"work_experience": [{"title": "Backend Engineer", "company": "Northwind"}]},
+        ("work_experience",),
+    )
+    companies = {role["company"] for role in combined["work_experience"]}
+    assert companies == {"Kestrel Payments", "Northwind"}
+
+
+def test_combine_unions_a_section_that_was_not_in_context() -> None:
+    """Without the context it would be overwriting, a return can only add."""
+    running = {"skills": ["Python", "PostgreSQL"]}
+    combined = import_service.combine_sections(
+        running, {"skills": ["Kafka", "python"]}, ("projects",)
+    )
+    # "python" matches the existing token case-insensitively and is not added.
+    assert combined["skills"] == ["Python", "PostgreSQL", "Kafka"]
+
+
+def test_combine_takes_a_returned_summary() -> None:
+    """The one scalar section is replaced when the pass returns a non-empty one."""
+    combined = import_service.combine_sections(
+        {"summary": "Old."}, {"summary": "New and longer."}, ("summary",)
+    )
+    assert combined["summary"] == "New and longer."
+
+
+def test_combine_ignores_an_empty_summary_and_unknown_keys() -> None:
+    """A blank answer never wipes a section, and junk keys are dropped."""
+    combined = import_service.combine_sections(
+        {"summary": "Old."}, {"summary": "", "nonsense": [1, 2]}, ("summary",)
+    )
+    assert combined["summary"] == "Old."
+    assert "nonsense" not in combined
 
 
 # ==========================================================================
@@ -532,28 +723,52 @@ def test_propose_import_prefers_azure(mock_merge) -> None:
     call = mock_merge.calls[-1]
     assert call["prefer"] == "azure"
     assert call["purpose"] == "profile import"
-    assert call["max_tokens"] == 8000
+    assert call["max_tokens"] == 16000
 
 
-def test_propose_import_sends_the_existing_profile_and_the_document(
+def test_propose_import_sends_only_the_relevant_sections_as_context(
     mock_merge,
 ) -> None:
-    """Both sides of the merge reach the model in one prompt."""
+    """A skills chunk is not shown the work history it cannot possibly touch.
+
+    This is what keeps both the prompt and the answer small enough to finish:
+    the pass is given the entries it might have to re-emit, and nothing else.
+    """
     mock_merge(EXISTING_PROFILE)
 
-    propose_import(EXISTING_PROFILE, "## Sheet: Skills\n| Kafka |", "career.xlsx")
+    propose_import(
+        EXISTING_PROFILE,
+        "## Sheet: Skills\n\n| Skill |\n| --- |\n| Kafka |",
+        "career.xlsx",
+    )
 
     user_message = mock_merge.calls[-1]["messages"][1]["content"]
-    assert "Kestrel Payments" in user_message
+    assert "PostgreSQL" in user_message  # the existing skills, as context
+    assert "Kestrel Payments" not in user_message  # the work history, left out
     assert "## Sheet: Skills" in user_message
     assert "career.xlsx" in user_message
 
 
-def test_propose_import_runs_one_pass_per_part_for_a_long_document(
+def test_propose_import_sends_the_matching_section_for_a_work_chunk(
+    mock_merge,
+) -> None:
+    """The converse: a work sheet does get the existing roles."""
+    mock_merge(EXISTING_PROFILE)
+
+    propose_import(
+        EXISTING_PROFILE,
+        "## Sheet: Work Experiences\n\n| Role | Company |\n| --- | --- |\n| A | B |",
+        "career.xlsx",
+    )
+
+    assert "Kestrel Payments" in mock_merge.calls[-1]["messages"][1]["content"]
+
+
+def test_propose_import_runs_one_pass_per_chunk(
     mock_merge, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A document over the single-pass limit is merged sequentially."""
-    monkeypatch.setattr(import_service, "MAX_SINGLE_PASS_CHARS", 400)
+    """A document over the chunk limit is merged sequentially, one pass each."""
+    monkeypatch.setattr(import_service, "MAX_CHUNK_CHARS", 400)
     mock_merge(EXISTING_PROFILE)
     text = "\n".join(
         "## Sheet: S{}\n{}".format(index, "| row |\n" * 40) for index in range(3)
@@ -562,7 +777,91 @@ def test_propose_import_runs_one_pass_per_part_for_a_long_document(
     propose_import(EXISTING_PROFILE, text, "career.xlsx")
 
     assert len(mock_merge.calls) > 1
-    assert "part 1 of" in mock_merge.calls[0]["messages"][1]["content"]
+    assert "PART 1/" in mock_merge.calls[0]["messages"][1]["content"]
+
+
+def test_propose_import_merges_each_chunk_into_the_last_result(
+    mock_merge, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Passes are sequential: pass two is shown what pass one added."""
+    monkeypatch.setattr(import_service, "MAX_CHUNK_CHARS", 600)
+    seen: list[str] = []
+
+    def answer(call_number: int, messages: list[dict]) -> tuple[dict, dict]:
+        seen.append(messages[1]["content"])
+        if call_number == 1:
+            return {"skills": ["Python", "PostgreSQL", "Kafka"]}, mock_merge.meta()
+        return {"skills": ["Python", "PostgreSQL", "Kafka", "Go"]}, mock_merge.meta()
+
+    mock_merge.sequence(answer)
+    text = "## Sheet: Skills\n\n| Skill |\n| --- |\n" + "| x |\n" * 200
+
+    result = propose_import(EXISTING_PROFILE, text, "career.xlsx")
+
+    assert len(seen) >= 2
+    # The second pass was shown the first pass's output, not the stored profile.
+    assert "Kafka" in seen[1]
+    assert result["proposal"]["skills"] == ["Python", "PostgreSQL", "Kafka", "Go"]
+
+
+def _dense_sheet(rows: int, width: int = 900) -> str:
+    """One sheet whose rows are long enough to fill a chunk on their own."""
+    lines = ["## Sheet: Projects", "", "| Project | Notes |", "| --- | --- |"]
+    lines += [
+        "| Project {} | {} |".format(index, "detail " * (width // 7))
+        for index in range(rows)
+    ]
+    return "\n".join(lines)
+
+
+def test_propose_import_resplits_a_truncated_pass(
+    mock_merge, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """finish_reason "length" means the answer was cut off: halve and retry."""
+    # The row cap would already have made these chunks small; this test is about
+    # what happens when a chunk that *is* within both limits still truncates.
+    monkeypatch.setattr(import_service, "MAX_ROWS_PER_CHUNK", 50)
+    attempts: list[int] = []
+
+    def answer(call_number: int, messages: list[dict]) -> tuple[dict, dict]:
+        attempts.append(len(messages[1]["content"]))
+        if call_number == 1:
+            return {"skills": ["Python"]}, mock_merge.meta(finish_reason="length")
+        return (
+            {"skills": ["Python", "PostgreSQL", "Kafka"]},
+            mock_merge.meta(finish_reason="stop"),
+        )
+
+    mock_merge.sequence(answer)
+
+    result = propose_import(EXISTING_PROFILE, _dense_sheet(18), "career.xlsx")
+
+    assert len(attempts) > 1
+    # Every retry reads less than the pass that truncated.
+    assert attempts[1] < attempts[0]
+    assert "Kafka" in result["proposal"]["skills"]
+
+
+def test_propose_import_gives_up_on_a_chunk_it_cannot_split(mock_merge) -> None:
+    """At the floor there is nothing left to split, so say so plainly."""
+    mock_merge({"skills": ["Python"]}, finish_reason="length")
+
+    with pytest.raises(import_service.DocumentTooDense, match="too dense"):
+        propose_import(EXISTING_PROFILE, "## Sheet: Skills\n| Kafka |", "career.xlsx")
+
+
+def test_propose_import_never_loops_forever_on_truncation(
+    mock_merge, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A document that always truncates fails rather than halving for ever."""
+    monkeypatch.setattr(import_service, "MAX_ROWS_PER_CHUNK", 50)
+    mock_merge({"skills": ["Python"]}, finish_reason="length")
+
+    with pytest.raises(import_service.DocumentTooDense):
+        propose_import(EXISTING_PROFILE, _dense_sheet(40), "career.xlsx")
+
+    # Bounded: halving stops at the floor rather than recursing indefinitely.
+    assert len(mock_merge.calls) < 64
 
 
 def test_propose_import_works_without_an_existing_profile(mock_merge) -> None:
@@ -574,14 +873,28 @@ def test_propose_import_works_without_an_existing_profile(mock_merge) -> None:
     assert {change["kind"] for change in result["changes"]} == {"added"}
 
 
-def test_propose_import_coerces_a_malformed_proposal(mock_merge) -> None:
-    """Model junk is dropped rather than raised, as everywhere else."""
+def test_propose_import_coerces_a_malformed_answer_without_losing_data(
+    mock_merge,
+) -> None:
+    """Model junk is coerced, and never at the cost of a stored entry."""
     mock_merge({"skills": "Python", "work_experience": "not a list"})
 
     result = propose_import(EXISTING_PROFILE, "text", "s.xlsx")
 
-    assert result["proposal"]["skills"] == ["Python"]
-    assert result["proposal"]["work_experience"] == []
+    # "Python" survives coercion, and PostgreSQL is restored rather than lost.
+    assert set(result["proposal"]["skills"]) == {"Python", "PostgreSQL"}
+    # A section that came back as nonsense keeps what the profile already had.
+    assert result["proposal"]["work_experience"][0]["company"] == "Kestrel Payments"
+    assert not [c for c in result["changes"] if c["kind"] == "removed"]
+
+
+def test_propose_import_reports_the_provider_that_answered(mock_merge) -> None:
+    """The provider comes from the completion metadata, not a string attribute."""
+    mock_merge(EXISTING_PROFILE, provider="groq")
+
+    result = propose_import(EXISTING_PROFILE, "text", "s.xlsx")
+
+    assert result["provider"] == "groq"
 
 
 def test_propose_import_wraps_a_provider_failure(
@@ -592,7 +905,7 @@ def test_propose_import_wraps_a_provider_failure(
     def boom(*args, **kwargs):
         raise RuntimeError("connection reset")
 
-    monkeypatch.setattr(import_service.llm, "complete_json", boom)
+    monkeypatch.setattr(import_service.llm, "complete_json_with_meta", boom)
 
     with pytest.raises(import_service.ImportProposalError):
         propose_import(EXISTING_PROFILE, "text", "s.xlsx")
@@ -603,6 +916,53 @@ def test_propose_import_rejects_an_empty_document() -> None:
     with pytest.raises(import_service.EmptyDocumentText):
         propose_import(EXISTING_PROFILE, "   ", "s.xlsx")
 
+
+# ==========================================================================
+# One row, one entry
+# ==========================================================================
+
+
+def test_count_data_rows_ignores_headers_and_separators() -> None:
+    """The header row of each sheet is not data, and neither is the rule line."""
+    chunk = (
+        "## Sheet: A\n\n| H1 | H2 |\n| --- | --- |\n| a | b |\n| c | d |\n\n"
+        "## Sheet: B\n\n| X |\n| --- |\n| 1 |"
+    )
+    assert import_service.count_data_rows(chunk) == 3
+
+
+def test_count_data_rows_is_zero_for_prose() -> None:
+    """A document with no table has no rows to promise the model."""
+    assert import_service.count_data_rows("Just some notes about a project") == 0
+
+
+def test_the_prompt_tells_each_pass_how_many_rows_it_holds(mock_merge) -> None:
+    """A pass given a wide table folds rows together unless it has a target.
+
+    Sixteen roles coming back as six is invisible in the response -- it looks
+    exactly like a document that described six -- so the count goes in the
+    prompt and the shortfall goes in the log.
+    """
+    mock_merge(EXISTING_PROFILE)
+    chunk = (
+        "## Sheet: Work Experiences\n\n| Role | Company |\n| --- | --- |\n"
+        "| A | B |\n| C | D |\n| E | F |"
+    )
+
+    propose_import(EXISTING_PROFILE, chunk, "career.xlsx")
+
+    user_message = mock_merge.calls[-1]["messages"][1]["content"]
+    assert "3 data rows" in user_message
+    assert "each one is its own entry" in user_message
+
+
+def test_the_prompt_omits_the_row_note_for_prose(mock_merge) -> None:
+    """A promise of zero rows would be worse than no promise."""
+    mock_merge(EXISTING_PROFILE)
+
+    propose_import(EXISTING_PROFILE, "A paragraph about a side project.", "notes.txt")
+
+    assert "data rows" not in mock_merge.calls[-1]["messages"][1]["content"]
 
 # ==========================================================================
 # raw_text appending
@@ -747,7 +1107,7 @@ def test_import_maps_a_provider_failure_to_502(
     def boom(*args, **kwargs):
         raise RuntimeError("provider down")
 
-    monkeypatch.setattr(import_service.llm, "complete_json", boom)
+    monkeypatch.setattr(import_service.llm, "complete_json_with_meta", boom)
 
     response = auth_client.post(
         "/profile/import",
@@ -805,6 +1165,25 @@ def test_import_caps_the_returned_document_text(
     )
 
     assert len(response.json()["document_text"]) == 200
+
+def test_import_maps_a_too_dense_file_to_422(
+    auth_client: TestClient, db: FakeSession, mock_merge
+) -> None:
+    """A file whose sections cannot be rebuilt in one answer says so, not 502.
+
+    502 would tell the user to retry, and retrying an unsplittable file just
+    burns another minute. The message names the fix instead.
+    """
+    db.seed(make_profile())
+    mock_merge({"skills": ["Python"]}, finish_reason="length")
+
+    response = auth_client.post(
+        "/profile/import",
+        files={"file": ("skills.csv", make_csv([["Skill"], ["Kafka"]]), "text/csv")},
+    )
+
+    assert response.status_code == 422
+    assert "split it into smaller files" in response.json()["detail"]
 
 # ==========================================================================
 # Routes -- POST /profile/import/apply
